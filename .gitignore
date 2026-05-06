@@ -1,0 +1,7 @@
+# Receiver runtime state — regenerated on first Hello
+test/config.json
+test/config.json.tmp
+
+# Node
+node_modules/
+npm-debug.log
