@@ -25,6 +25,7 @@ const voiceTemplates = require('./modules/core/voice-templates.js');
 const resultsStore = require('./modules/core/results-store.js');
 const cameraSwitcher = require('./modules/camera_switcher');
 const ledHandler = require('./modules/core/led-handler.js');
+const { createRouter } = require('./modules/core/event-router.js');
 
 // --- Tunables ---------------------------------------------------------------
 
@@ -36,21 +37,12 @@ const REQUEST_BODY_LIMIT = '4mb';
 const KEEPALIVE_TIMEOUT_MS = 360_000;
 const HEADERS_TIMEOUT_MS   = 361_000;
 const SHUTDOWN_FORCE_EXIT_MS = 2000;
-// De-dup window — large enough to survive a long race + restart skew.
-const SEEN_DETECTION_MAX = 10_000;
 
 // --- Bootstrap config -------------------------------------------------------
 
 let config = configStore.get();
-ledHandler.reconfigure(config.led);
-// ... (omitted port config) ...
 
-// --- Real-time camera updates to UI when status actually changes ------------
-cameraSwitcher.onStatusChange((status) => {
-    if (typeof io !== 'undefined') {
-        io.emit('camera_update', status);
-    }
-});
+// Ensure a port exists in the persisted config before we read it below.
 if (!config.extension || typeof config.extension.port !== 'number') {
     config.extension = config.extension || {};
     config.extension.port = DEFAULT_EXTENSION_PORT;
@@ -67,15 +59,9 @@ if (HOST === '0.0.0.0') {
     logger.warn('[Bootstrap] bindHost=0.0.0.0 — receiver is reachable from the network. /api/config has no auth; restrict via firewall.');
 }
 
-// --- VOICEVOX & camera modules ---------------------------------------------
-
-const vvHandler = new VoiceVoxHandler(config.voicevox || {});
-
-if (config.camera_switcher && config.camera_switcher.enabled) {
-    cameraSwitcher.init();
-}
-
 // --- HTTP server + Socket.IO -----------------------------------------------
+// Constructed before any module callback that might want to emit on `io`, so
+// the `typeof io !== 'undefined'` guard is no longer needed.
 
 const app = express();
 const server = http.createServer(app);
@@ -94,47 +80,51 @@ const io = new IoServer(server, {
     cors: { origin: (origin, cb) => cb(null, isOriginAllowed(origin)) },
 });
 
+// --- LED + camera + VOICEVOX modules ---------------------------------------
+// Wired AFTER `io` exists so onStatusChange can emit immediately and safely.
+
+ledHandler.reconfigure(config.led);
+
+cameraSwitcher.onStatusChange((status) => {
+    io.emit('camera_update', status);
+});
+
+const vvHandler = new VoiceVoxHandler(config.voicevox || {});
+
+if (config.camera_switcher && config.camera_switcher.enabled) {
+    cameraSwitcher.init();
+}
+
 app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Vendored assets served from node_modules (offline-friendly).
 // Tailwind is in public/vendor/tailwind.js (served by the static mount above).
 const NM = path.join(__dirname, 'node_modules');
-app.use('/vendor/bootstrap',   express.static(path.join(NM, 'bootstrap', 'dist')));
-app.use('/vendor/fontawesome', express.static(path.join(NM, '@fortawesome', 'fontawesome-free')));
-app.use('/vendor/fonts/orbitron',      express.static(path.join(NM, '@fontsource', 'orbitron')));
-app.use('/vendor/fonts/noto-sans-jp',  express.static(path.join(NM, '@fontsource', 'noto-sans-jp')));
-app.use('/vendor/fonts/titillium-web', express.static(path.join(NM, '@fontsource', 'titillium-web')));
-app.use('/vendor/fonts/roboto-mono',   express.static(path.join(NM, '@fontsource', 'roboto-mono')));
-app.use('/vendor/fonts/audiowide',     express.static(path.join(NM, '@fontsource', 'audiowide')));
+const VENDOR_MOUNTS = [
+    { url: '/vendor/bootstrap',        src: ['bootstrap', 'dist'] },
+    { url: '/vendor/fontawesome',      src: ['@fortawesome', 'fontawesome-free'] },
+    { url: '/vendor/fonts/orbitron',       src: ['@fontsource', 'orbitron'] },
+    { url: '/vendor/fonts/noto-sans-jp',   src: ['@fontsource', 'noto-sans-jp'] },
+    { url: '/vendor/fonts/titillium-web',  src: ['@fontsource', 'titillium-web'] },
+    { url: '/vendor/fonts/roboto-mono',    src: ['@fontsource', 'roboto-mono'] },
+    { url: '/vendor/fonts/audiowide',      src: ['@fontsource', 'audiowide'] },
+];
+for (const m of VENDOR_MOUNTS) {
+    app.use(m.url, express.static(path.join(NM, ...m.src)));
+}
+
+// Event router holds per-stream state (seat map, seq, dedup, last detection)
+// and the type→handler dictionary. server.js stays thin: HTTP + bootstrap.
+const router = createRouter({
+    io, ledHandler, cameraSwitcher, vvHandler,
+    voiceLogic, voiceTemplates, resultsStore,
+    configStore, logger,
+});
 
 // PUT receiver — must ack BEFORE processing (§2.3).
 const fpvtQueue = [];
 let draining = false;
-let lastSeq = 0;
-let lastDetection = null;
-
-// Bounded de-dup window. Detections that disappear from the window can be
-// re-processed on a network retry; that's acceptable because de-dup is a
-// defensive measure (the sender already filters duplicates per §10).
-const seenDetections = new Set();
-const seenOrder = [];
-
-function rememberDetection(id) {
-    if (seenDetections.has(id)) return true;
-    seenDetections.add(id);
-    seenOrder.push(id);
-    if (seenOrder.length > SEEN_DETECTION_MAX) {
-        const evicted = seenOrder.shift();
-        seenDetections.delete(evicted);
-    }
-    return false;
-}
-
-function clearSeenDetections() {
-    seenDetections.clear();
-    seenOrder.length = 0;
-}
 
 app.put('/', (req, res) => {
     res.status(200).end();
@@ -181,252 +171,13 @@ function drainQueue() {
         while (fpvtQueue.length > 0) {
             const evt = fpvtQueue.shift();
             try {
-                dispatch(evt);
+                router.dispatch(evt);
             } catch (e) {
-                logger.error(`[Dispatch] type=${evt?.type} ${e.message}`);
+                logger.error(`[Dispatch] type=${evt?.type} ${e.stack || e.message}`);
             }
         }
     } finally {
         draining = false;
-    }
-}
-
-// --- Event dispatch --------------------------------------------------------
-
-function announce(text) {
-    io.emit('announce_text', { text });
-    if (vvHandler.enabled) {
-        vvHandler.enqueueText(text, (audioData) => {
-            if (audioData) io.emit('play_audio', { data: audioData });
-        });
-    }
-}
-
-// Map a DetectionExt to a camera_switcher event.
-// timingSystemIndex 0 is the Goal/Prime gate; the rest are splits in track
-// order. Sector is the pilot's current position on the lap:
-//   index 0 (Goal)  → sector = splitsPerLap (last sector of the lap)
-//   index n (Split) → sector = n
-// ATEM input number == sector. We also pass FPVTrackside's authoritative
-// positionSnapshot so the switcher can resolve Auto/PosN modes without
-// recomputing ranks. Each entry is enriched with cameraInput derived from
-// raceSector (cumulative sector counter from the spec).
-function detectionToCameraEvent(evt, seatIndex) {
-    const tsys = configStore.get().fpvt?.timingSystem;
-    const splitsPerLap = tsys?.splitsPerLap ?? 4;
-    const logicalGate = evt.timingSystemIndex;
-    const isGoalGate = (logicalGate === 0);
-
-    if (isGoalGate && !evt.isLapEnd) {
-        logger.warn(`[Detection] gate 0 (Goal) but isLapEnd=false (pilot=${evt.pilotName})`);
-    } else if (!isGoalGate && evt.isLapEnd) {
-        logger.warn(`[Detection] gate ${logicalGate} (Split) but isLapEnd=true (pilot=${evt.pilotName})`);
-    }
-
-    const sector = isGoalGate ? splitsPerLap : logicalGate;
-
-    // raceSector encoding (per INTERFACE.md): lap × 100 + timingSystemIndex.
-    // The "100" is a fixed multiplier in Core's RaceSectorCalculator (assumes
-    // splitsPerLap ≤ 100), so the index portion is the raw timingSystemIndex
-    // with Goal = 0 and splits = 1..(splitsPerLap-1). Map each timer to its
-    // own ATEM input (TSI N → camera N+1), capped to splitsPerLap so a stale
-    // or oversized index never points past the configured cameras.
-    const camInputCap = Math.max(1, splitsPerLap);
-    const snap = (evt.positionSnapshot || []).map(e => {
-        const sIdx = e.raceSector % 100;
-        const camInput = Math.min(sIdx, camInputCap - 1) + 1;
-
-        return {
-            pilotName: e.pilotName,
-            position: e.position,
-            raceSector: e.raceSector,
-            lastDetectionTime: e.lastDetectionTime,
-            cameraInput: camInput,
-            seat: pilotSeatByName.get(e.pilotName),
-        };
-    });
-
-    return {
-        type: 'lap',
-        seat: seatIndex,
-        sector,
-        isLapEnd: !!evt.isLapEnd,
-        pilotName: evt.pilotName,
-        raceFinishedForPilot: !!evt.raceFinishedForPilot,
-        positionSnapshot: snap,
-    };
-}
-
-const pilotSeatByName = new Map();    // current race only
-
-function updateSeatMap(pilots) {
-    if (!pilots || !Array.isArray(pilots)) return;
-    // Rebuild fresh — stale entries from the previous race would mis-map seats
-    // when pilot rosters change between heats.
-    pilotSeatByName.clear();
-    pilots.forEach((p, idx) => {
-        // p might be PilotInfoExt or PilotResultEntry (with p.pilot)
-        const pilot = p.pilot || p;
-        if (pilot?.name) {
-            pilotSeatByName.set(pilot.name, idx);
-        }
-    });
-}
-
-function dispatch(evt) {
-    if (!evt || typeof evt !== 'object') return;
-
-    if (typeof evt.seq === 'number') {
-        if (evt.seq < lastSeq) {
-            logger.warn(`[Seq] reset ${evt.seq} < ${lastSeq} — sender restart suspected`);
-            clearSeenDetections();
-        } else if (lastSeq !== 0 && evt.seq > lastSeq + 1) {
-            logger.warn(`[Seq] gap expected ${lastSeq + 1} got ${evt.seq}`);
-        }
-        lastSeq = evt.seq;
-    }
-
-    switch (evt.type) {
-        case 'Hello': {
-            config = configStore.applyHello(evt);
-            const tsys = evt.timingSystem || {};
-            logger.info(`[Hello] v${evt.fpvtVersion} ${evt.platform} profile=${evt.profile?.name} timers=${tsys.count} sectorsPerLap=${tsys.splitsPerLap}`);
-            break;
-        }
-
-        case 'RaceLoaded': {
-            updateSeatMap(evt.pilots);
-            voiceLogic.loadPilots(evt.pilots);
-            voiceLogic.setRaceActive(false);
-            resultsStore.onRaceLoaded(evt);
-            cameraSwitcher.setRaceLapCount(evt.targetLaps || null);
-            break;
-        }
-
-        case 'NextRace': {
-            updateSeatMap(evt.pilots);
-            resultsStore.onNextRace(evt);
-            break;
-        }
-
-        case 'RacePreStart': {
-            // Visual countdown only
-            if (evt.scheduledStart) {
-                const scheduledWallMs = new Date(evt.scheduledStart).getTime();
-                const nowWallMs = Date.now();
-                const nowMonotonic = performance.now() / 1000;
-                const startMonotonic = nowMonotonic + (scheduledWallMs - nowWallMs) / 1000;
-                io.emit('race_start', { startTime: startMonotonic });
-                logger.info(`[RacePreStart] R${evt.round}.${evt.race} in ${((scheduledWallMs - nowWallMs)/1000).toFixed(2)}s`);
-                
-                // LED Countdown scheduling
-                ledHandler.scheduleCountdown(scheduledWallMs);
-            } else {
-                logger.info(`[RacePreStart] R${evt.round}.${evt.race} (no scheduledStart)`);
-            }
-            // Trigger camera default on PreStart
-            cameraSwitcher.triggerEvent({ type: 'race_start' });
-            break;
-        }
-
-        case 'RaceStart': {
-            voiceLogic.resetForRace();
-            voiceLogic.setRaceActive(true);
-            // We already switched to default in PreStart, but this ensures 
-            // the state is ready for incoming detections.
-            const seats = pilotSeatByName.size > 0
-                ? Array.from(pilotSeatByName.values())
-                : [];
-            cameraSwitcher.triggerEvent({ type: 'race_start', args: seats });
-            logger.info(`[RaceStart] R${evt.round}.${evt.race} t0=${evt.actualStart}`);
-            break;
-        }
-
-        case 'RaceTimesUp': {
-            logger.info(`[RaceTimesUp] R${evt.round}.${evt.race}`);
-            break;
-        }
-
-        case 'RaceEnd':
-        case 'RaceCancelled': {
-            voiceLogic.setRaceActive(false);
-            cameraSwitcher.triggerEvent({ type: 'race_end' });
-            ledHandler.onRaceEnd();
-            vvHandler.clearQueue();
-            resultsStore.onRaceEnd(evt);
-            const endKey = evt.type === 'RaceEnd'
-                ? 'raceEnd'
-                : (evt.failure ? 'raceFailed' : 'raceCancelled');
-            const endText = voiceTemplates.render(endKey);
-            if (endText) announce(endText);
-            break;
-        }
-
-        case 'DetectionExt': {
-            // §10: defensive de-dup even though sender filters.
-            if (evt.detectionId && rememberDetection(evt.detectionId)) return;
-
-            // Save for re-triggering on mode change
-            if (evt.valid !== false) lastDetection = evt;
-
-            // TTS for lap end (and finish).
-            voiceLogic.onDetection(evt, announce);
-
-            const seat = pilotSeatByName.get(evt.pilotName);
-
-            // LED notification: Packet with RGB (Lap end only)
-            if (seat !== undefined && evt.isLapEnd) {
-                const c = evt.channel || {};
-                ledHandler.onPilotPass(seat, c.colorR || 0, c.colorG || 0, c.colorB || 0);
-            }
-
-            // Camera switching: fire on every valid detection so manual modes
-            // (Pos/Seat) update lastServerId for splits too.
-            if (evt.valid !== false) {
-                const camEvt = detectionToCameraEvent(evt, seat);
-
-                if (camEvt) {
-                    cameraSwitcher.triggerEvent(camEvt);
-                } else {
-                    const seatMapSize = pilotSeatByName.size;
-                    logger.debug(`[Camera] camEvt is null. pilot="${evt.pilotName}", seat=${seat}, mapSize=${seatMapSize}`);
-                    if (seatMapSize === 0) {
-                        logger.warn(`[Camera] Seat map is empty! Reload the race in FPVTrackside.`);
-                    }
-                }
-            } else {
-                logger.debug(`[Camera] evt.valid is false for pilot=${evt.pilotName}`);
-            }
-            break;
-        }
-
-        case 'RaceResult': {
-            updateSeatMap(evt.pilots);
-            resultsStore.onRaceResult(evt);
-            break;
-        }
-
-        case 'StageRanking': {
-            resultsStore.onStageRanking(evt);
-            break;
-        }
-
-        case 'PilotCrashedOut': {
-            resultsStore.onPilotCrashed(evt);
-            voiceLogic.onCrash(evt, announce);
-            break;
-        }
-
-        case 'PilotRaceState': {
-            updateSeatMap(evt.pilots);
-            voiceLogic.loadPilots(evt.pilots);
-            break;
-        }
-
-        default: {
-            // §10: silently ignore unknown types.
-            logger.debug(`[ignored] type=${evt?.type ?? '<missing>'}`);
-        }
     }
 }
 
@@ -445,10 +196,13 @@ app.post('/api/config', (req, res) => {
         // Update handlers
         ledHandler.reconfigure(config.led);
 
-        // Re-trigger camera switching if we have a recent detection
+        // Re-trigger camera switching if we have a recent detection so a
+        // mode change (Auto/PosN/SeatN) takes effect without waiting for the
+        // next lap.
+        const lastDetection = router.getLastDetection();
         if (lastDetection) {
-            const seat = pilotSeatByName.get(lastDetection.pilotName);
-            const camEvt = detectionToCameraEvent(lastDetection, seat);
+            const seat = router.getSeat(lastDetection.pilotName);
+            const camEvt = router.mapDetectionToCameraEvent(lastDetection, seat);
             if (camEvt) cameraSwitcher.triggerEvent(camEvt);
         }
 
@@ -506,7 +260,7 @@ app.get('/api/test_voice', async (req, res) => {
     const text = (req.query.text || '接続テストです。この声で読み上げを行います。').toString();
     if (!vvHandler.enabled) return res.status(400).json({ error: 'VOICEVOX disabled' });
     try {
-        announce(text);
+        router.announce(text);
         res.json({ success: true, text });
     } catch (e) {
         res.status(500).json({ error: e.message });

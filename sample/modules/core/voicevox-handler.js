@@ -17,6 +17,15 @@ class VoiceVoxHandler {
         this.isPlaying = false;
         this.psProcess = null;
 
+        // Tail of a per-call promise chain so synth completions are delivered
+        // to the browser (and to the server-side playback queue) in the order
+        // enqueueText was called, regardless of how long each /synthesis takes.
+        // The chain is fire-and-forget; rejections are swallowed in the catch.
+        this._emitTail = Promise.resolve();
+        // Bumped by clearQueue(); any pending synth whose captured generation
+        // is older is dropped before the browser / server emit runs.
+        this._generation = 0;
+
         if (this.enabled) {
             logger.info(`[VoiceVox] init speaker=${this.speaker} volume=${this.volume} speed=${this.speed}`);
             this.checkStatus();
@@ -70,49 +79,57 @@ class VoiceVoxHandler {
         } catch (_e) { /* engine offline */ }
     }
 
-    async enqueueText(text, callback) {
+    enqueueText(text, callback) {
         if (!this.enabled || !text) return;
-        
+
         logger.debug(`[VoiceVox] synthesis start: "${text}"`);
-        
-        try {
-            // 1. Immediately start synthesis (rendering)
-            const base64Data = await this.generateAudioInternal(text);
+
+        // Kick off /synthesis immediately so multiple calls run in parallel —
+        // VOICEVOX is the rate-limit, not us. The deferred work (browser emit
+        // and server playback enqueue) is then serialized through _emitTail so
+        // a slow synth never overtakes a faster one queued after it.
+        const gen = this._generation;
+        const synthPromise = this.generateAudioInternal(text)
+            .catch(e => {
+                logger.error(`[VoiceVox] pipeline error: ${e.message}`);
+                return null;
+            });
+
+        this._emitTail = this._emitTail.then(async () => {
+            const base64Data = await synthPromise;
             if (!base64Data) return;
+            // Race ended (or otherwise cleared) while this was synthesising —
+            // drop the stale announcement instead of playing it into the
+            // silence after RaceEnd.
+            if (gen !== this._generation) return;
 
-            // 2. Trigger browser callback if needed
-            if (callback) callback(base64Data);
+            if (callback) {
+                try { callback(base64Data); } catch (e) { logger.error(`[VoiceVox] emit error: ${e.message}`); }
+            }
 
-            // 3. For server-side playback, add the generated buffer to the playback queue
             if (this.playOnServer && this.psProcess) {
                 const buffer = Buffer.from(base64Data, 'base64');
                 this.playQueue.push(buffer);
                 this.processNextInQueue();
             }
-        } catch (e) {
-            logger.error(`[VoiceVox] pipeline error: ${e.message}`);
-        }
+        }).catch(() => { /* keep the chain alive on any unexpected error */ });
     }
 
     async generateAudioInternal(text) {
-        try {
-            const queryRes = await fetch(`${this.url}/audio_query?text=${encodeURIComponent(text)}&speaker=${this.speaker}`, {
-                method: 'POST'
-            });
-            const query = await queryRes.json();
-            query.speedScale = this.speed;
-            query.volumeScale = this.volume;
+        const queryRes = await fetch(`${this.url}/audio_query?text=${encodeURIComponent(text)}&speaker=${this.speaker}`, {
+            method: 'POST'
+        });
+        const query = await queryRes.json();
+        query.speedScale = this.speed;
+        query.volumeScale = this.volume;
 
-            const synthRes = await fetch(`${this.url}/synthesis?speaker=${this.speaker}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(query)
-            });
-            const buffer = await synthRes.arrayBuffer();
-            return Buffer.from(buffer).toString('base64');
-        } catch (e) {
-            throw e;
-        }
+        const synthRes = await fetch(`${this.url}/synthesis?speaker=${this.speaker}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(query)
+        });
+        const buffer = await synthRes.arrayBuffer();
+        return Buffer.from(buffer).toString('base64');
     }
 
     processNextInQueue() {
@@ -134,6 +151,7 @@ class VoiceVoxHandler {
     }
 
     clearQueue() {
+        this._generation++;             // drops any synth in-flight when this returns
         const count = this.playQueue.length;
         this.playQueue = [];
         if (count) logger.info(`[VoiceVox] queue cleared (${count})`);

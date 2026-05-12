@@ -1,6 +1,10 @@
 # Receiver runtime state — regenerated on first Hello
 test/config.json
 test/config.json.tmp
+sample/fpvt.json
+
+# Receiver runtime logs
+sample/log/
 
 # Node
 node_modules/
