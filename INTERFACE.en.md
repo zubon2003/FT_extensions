@@ -315,7 +315,7 @@ A single row in a position snapshot — see §7.4.
 |---|---|---|
 | `pilotName` | string | Identifies the pilot by display name |
 | `position` | int | 1-based; ties may share a position (see §7.4) |
-| `raceSector` | int | Cumulative sector index reached (lap×sectors + sectorIdx). Higher = further. |
+| `raceSector` | int | Cumulative sector index reached, encoded as `lap × 100 + timingSystemIndex` (see §7.4 and Glossary). Higher = further. |
 | `lastDetectionTime` | number (seconds) | Seconds since race start of the last detection used to place this pilot. `0` if not yet detected. |
 
 ### 6.4 `StageInfo`
@@ -532,7 +532,7 @@ The most frequent event. Fires once per gate detection (sector pass or lap end).
 | `isLapEnd` | bool | True for the lap-loop crossing; false for intermediate sectors. |
 | `lapNumber` | int | 0-based lap currently being run (or just completed if `isLapEnd`). |
 | `sectorIndex` | int | Within-lap sector index (1-based). For `IsLapEnd=true`, this is the final sector of the lap. |
-| `raceSector` | int | Cumulative sector index since race start (`lap × sectorCount + sectorIndex`). Used internally for ordering — same value as `PositionEntry.raceSector`. |
+| `raceSector` | int | Cumulative sector index since race start, encoded as `lap × 100 + timingSystemIndex`. Note: the `100` is a fixed multiplier (not `splitsPerLap`) and the index portion is the raw 0-based `timingSystemIndex` (Goal = 0), **not** the 1-based `sectorIndex` field above. Requires `splitsPerLap ≤ 100` for ordering to be unambiguous. Used internally for ordering — same value as `PositionEntry.raceSector`. |
 | `raceTime` | number (seconds) | Seconds since `RaceStart.actualStart` for this detection. |
 | `sectorTime` | number (seconds) \| null | Time taken to traverse the sector that ended at this detection. `null` if no preceding detection exists for this pilot in this lap (e.g. holeshot). |
 | `lapTimeSoFar` | number (seconds) | Time elapsed in the current lap (or final lap time if `isLapEnd`). |
@@ -715,7 +715,7 @@ This is enough to receive every event, persist `config.json`, and dispatch handl
 | **Event** | A single JSON object delivered over one HTTP PUT (or one serial write). |
 | **Sector** | A timing checkpoint within a lap. Sector 1 starts at the lap loop and ends at the first inner gate. |
 | **Lap end** | The crossing of the lap loop, completing a lap. Treated as a special sector. |
-| **RaceSector** | Cumulative sector index since race start: `lap × sectorCount + sectorIndex`. Used to rank pilots — higher means further along the course. |
+| **RaceSector** | Cumulative sector index since race start, encoded as `lap × 100 + timingSystemIndex`. The `100` is a fixed multiplier (assumes `splitsPerLap ≤ 100`); the index portion is the raw 0-based `timingSystemIndex` (Goal = 0), not the 1-based `sectorIndex` field. Used to rank pilots — higher means further along the course. |
 | **PositionSnapshot** | The full leaderboard at the moment of a single detection, pre-computed by the sender. |
 | **Stage** | A grouping of rounds (e.g. Qualifying, Final). A round may or may not belong to a stage. |
 | **Heartbeat** | The repeated Hello PUT during startup until the Extension acks. |

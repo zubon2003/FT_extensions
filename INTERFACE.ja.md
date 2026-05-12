@@ -316,7 +316,7 @@ absolutePath = path.join(config.Fpvt.Paths.WorkingDirectory, pilot.PhotoPath)
 |---|---|---|
 | `pilotName` | string | 表示名で識別 |
 | `Position` | int | 1 始まり. 同着があれば同位を共有（§7.4） |
-| `RaceSector` | int | 到達済み累積セクター index（`lap × sectorCount + sectorIdx`）. 値が大きいほど先 |
+| `RaceSector` | int | 到達済み累積セクター index. エンコーディングは `lap × 100 + timingSystemIndex`（§7.4 と用語集を参照）. 値が大きいほど先 |
 | `lastDetectionTime` | number（秒） | 順位算定に使用した最後の検出のレース開始からの秒数. 未検出なら `0` |
 
 ### 6.4 `StageInfo`
@@ -533,7 +533,7 @@ absolutePath = path.join(config.Fpvt.Paths.WorkingDirectory, pilot.PhotoPath)
 | `isLapEnd` | bool | ラップループ通過なら true、中間セクターなら false |
 | `lapNumber` | int | 進行中（`IsLapEnd=true` なら完了直後）のラップ番号（0 始まり） |
 | `SectorIndex` | int | ラップ内セクター index（1 始まり）. `IsLapEnd=true` ではラップ最終セクター |
-| `raceSector` | int | レース開始からの累積セクター index（`lap × sectorCount + sectorIndex`）. 順位算定の内部値 — `PositionEntry.RaceSector` と同じ |
+| `raceSector` | int | レース開始からの累積セクター index. エンコーディングは `lap × 100 + timingSystemIndex`. `100` は固定の乗数（`splitsPerLap` ではない）であり、インデックス部分は 0 始まりの生 `timingSystemIndex`（Goal = 0）で、上の 1 始まり `sectorIndex` フィールドとは別物. 順序を曖昧なくするためには `splitsPerLap ≤ 100` を前提とする. 順位算定の内部値 — `PositionEntry.RaceSector` と同じ |
 | `raceTime` | number（秒） | `RaceStart.ActualStart` からの本検出までの秒数 |
 | `sectorTime` | number（秒） \| null | 本検出で終了したセクターの所要時間. 当該パイロットの本ラップ内に先行検出が無ければ null（例: ホールショット） |
 | `lapTimeSoFar` | number（秒） | 現ラップ経過時間（`isLapEnd` なら最終ラップタイム） |
@@ -715,7 +715,7 @@ def worker(queue):
 | **イベント** | 1 回の HTTP PUT（または 1 回のシリアル書き込み）で配送される 1 個の JSON オブジェクト |
 | **セクター** | ラップ内のタイミングチェックポイント. セクター 1 はラップループ通過直後から最初の内側ゲートまで |
 | **ラップ終端** | ラップループの通過. ラップを完了させる. 特殊なセクター扱い |
-| **RaceSector** | レース開始からの累積セクター index: `lap × sectorCount + sectorIndex`. 順位算定に使用 — 大きいほどコース上で先 |
+| **RaceSector** | レース開始からの累積セクター index. エンコーディングは `lap × 100 + timingSystemIndex`. `100` は固定の乗数（`splitsPerLap ≤ 100` を前提）であり、インデックス部分は 0 始まりの生 `timingSystemIndex`（Goal = 0）で、1 始まりの `sectorIndex` フィールドとは別物. 順位算定に使用 — 大きいほどコース上で先 |
 | **PositionSnapshot** | 1 個の検出時点での順位表全体（送信側で事前計算済み） |
 | **Stage** | ラウンドのグルーピング（例: 予選、決勝）. ラウンドはステージに属する場合と属さない場合がある |
 | **Heartbeat** | 起動時、Extension の ack を受けるまで繰り返される Hello PUT |
