@@ -26,6 +26,19 @@ const resultsStore = require('./modules/core/results-store.js');
 const cameraSwitcher = require('./modules/camera_switcher');
 const ledHandler = require('./modules/core/led-handler.js');
 
+// --- Tunables ---------------------------------------------------------------
+
+const DEFAULT_EXTENSION_PORT = 8765;
+const DEFAULT_BIND_HOST = '127.0.0.1';
+const REQUEST_BODY_LIMIT = '4mb';
+// keepAlive ≥ Hello-Heartbeat interval so the sender's persistent connection
+// is never closed under us between events; headers is +1s as Node requires.
+const KEEPALIVE_TIMEOUT_MS = 360_000;
+const HEADERS_TIMEOUT_MS   = 361_000;
+const SHUTDOWN_FORCE_EXIT_MS = 2000;
+// De-dup window — large enough to survive a long race + restart skew.
+const SEEN_DETECTION_MAX = 10_000;
+
 // --- Bootstrap config -------------------------------------------------------
 
 let config = configStore.get();
@@ -40,7 +53,7 @@ cameraSwitcher.onStatusChange((status) => {
 });
 if (!config.extension || typeof config.extension.port !== 'number') {
     config.extension = config.extension || {};
-    config.extension.port = 8765;
+    config.extension.port = DEFAULT_EXTENSION_PORT;
     configStore.replace(config);
 }
 const PORT = config.extension.port;
@@ -49,7 +62,7 @@ const PORT = config.extension.port;
 // LAN, e.g. when overlays run on a separate OBS PC.
 const HOST = (config.extension && typeof config.extension.bindHost === 'string')
     ? config.extension.bindHost
-    : '127.0.0.1';
+    : DEFAULT_BIND_HOST;
 if (HOST === '0.0.0.0') {
     logger.warn('[Bootstrap] bindHost=0.0.0.0 — receiver is reachable from the network. /api/config has no auth; restrict via firewall.');
 }
@@ -81,7 +94,7 @@ const io = new IoServer(server, {
     cors: { origin: (origin, cb) => cb(null, isOriginAllowed(origin)) },
 });
 
-app.use(express.json({ limit: '4mb' }));
+app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Vendored assets served from node_modules (offline-friendly).
@@ -104,7 +117,6 @@ let lastDetection = null;
 // Bounded de-dup window. Detections that disappear from the window can be
 // re-processed on a network retry; that's acceptable because de-dup is a
 // defensive measure (the sender already filters duplicates per §10).
-const SEEN_MAX = 10000;
 const seenDetections = new Set();
 const seenOrder = [];
 
@@ -112,7 +124,7 @@ function rememberDetection(id) {
     if (seenDetections.has(id)) return true;
     seenDetections.add(id);
     seenOrder.push(id);
-    if (seenOrder.length > SEEN_MAX) {
+    if (seenOrder.length > SEEN_DETECTION_MAX) {
         const evicted = seenOrder.shift();
         seenDetections.delete(evicted);
     }
@@ -583,8 +595,8 @@ io.on('connection', (socket) => {
 
 // --- Lifecycle --------------------------------------------------------------
 
-server.keepAliveTimeout = 360000;
-server.headersTimeout = 361000;
+server.keepAliveTimeout = KEEPALIVE_TIMEOUT_MS;
+server.headersTimeout = HEADERS_TIMEOUT_MS;
 
 server.listen(PORT, HOST, () => {
     console.log('────────────────────────────────────────────────────────────');
@@ -613,7 +625,7 @@ function shutdown(sig) {
     try { vvHandler.clearQueue(); } catch (_e) { /* best-effort */ }
 
     server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 2000).unref();
+    setTimeout(() => process.exit(0), SHUTDOWN_FORCE_EXIT_MS).unref();
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));

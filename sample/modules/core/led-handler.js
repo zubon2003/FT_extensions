@@ -1,6 +1,28 @@
 const { SerialPort } = require('serialport');
 const logger = require('./logger.js');
 
+// Serial-protocol constants. See led_test_receiver.js for the wire-format
+// reference: every frame is 5 bytes [Type, V1, V2, V3, CRC] where CRC is the
+// XOR of the first four bytes. The microcontroller distinguishes packets by
+// the leading TYPE_* byte.
+const BAUD_RATE = 115_200;
+const PACKET_SIZE = 5;
+const TYPE_PILOT = 0x01;     // Pilot pass with RGB
+const TYPE_SYSTEM = 0x02;    // System / countdown event (ASCII char in V1)
+
+// Countdown schedule: seconds-before-start → character emitted to the LED
+// controller. 'R' arms the panel, '5'..'1' count down, 'G' is the start cue.
+const COUNTDOWN_SCHEDULE = [
+    { sec: 8, char: 'R' },
+    { sec: 5, char: '5' },
+    { sec: 4, char: '4' },
+    { sec: 3, char: '3' },
+    { sec: 2, char: '2' },
+    { sec: 1, char: '1' },
+    { sec: 0, char: 'G' },
+];
+const RACE_END_CHAR = 'E';
+
 class LedHandler {
     constructor() {
         this.port = null;
@@ -8,10 +30,6 @@ class LedHandler {
         this.enabled = false;
         this.compensationMs = 0;
         this.countdownTimers = [];
-
-        // Command Types
-        this.TYPE_PILOT  = 0x01; // Pilot pass with RGB
-        this.TYPE_SYSTEM = 0x02; // System/Countdown event
     }
 
     reconfigure(config) {
@@ -41,7 +59,7 @@ class LedHandler {
         if (!this.currentPortName) return;
         this.port = new SerialPort({
             path: this.currentPortName,
-            baudRate: 115200,
+            baudRate: BAUD_RATE,
             autoOpen: false
         });
 
@@ -50,7 +68,7 @@ class LedHandler {
                 logger.error(`[LED] Error opening port ${this.currentPortName}: ${err.message}`);
                 return;
             }
-            logger.info(`[LED] Connected to ${this.currentPortName} at 115200bps (Packet Mode)`);
+            logger.info(`[LED] Connected to ${this.currentPortName} at ${BAUD_RATE}bps (Packet Mode)`);
         });
 
         this.port.on('error', (err) => logger.error(`[LED] Serial error: ${err.message}`));
@@ -64,12 +82,12 @@ class LedHandler {
     sendPacket(byte1, byte2, byte3, byte4) {
         if (!this.enabled || !this.port || !this.port.isOpen) return;
 
-        const packet = Buffer.alloc(5);
+        const packet = Buffer.alloc(PACKET_SIZE);
         packet[0] = byte1 & 0xFF;
         packet[1] = byte2 & 0xFF;
         packet[2] = byte3 & 0xFF;
         packet[3] = byte4 & 0xFF;
-        
+
         // XOR CRC Calculation
         packet[4] = packet[0] ^ packet[1] ^ packet[2] ^ packet[3];
 
@@ -82,21 +100,21 @@ class LedHandler {
      * Pilot pass: Byte1 = 0x01, Data = RGB
      */
     onPilotPass(seatIndex, r, g, b) {
-        this.sendPacket(this.TYPE_PILOT, r || 0, g || 0, b || 0);
+        this.sendPacket(TYPE_PILOT, r || 0, g || 0, b || 0);
         logger.debug(`[LED] Pilot Pass RGB(${r},${g},${b})`);
     }
 
     /**
-     * System event: Byte1 = 0x02, Byte2 = ASCII Char
+     * System event: Byte1 = TYPE_SYSTEM, Byte2 = ASCII Char
      */
     sendSystemEvent(char) {
-        this.sendPacket(this.TYPE_SYSTEM, char.charCodeAt(0), 0, 0);
+        this.sendPacket(TYPE_SYSTEM, char.charCodeAt(0), 0, 0);
         logger.info(`[LED] System Event: '${char}'`);
     }
 
     onRaceEnd() {
         this.clearCountdown();
-        this.sendSystemEvent('E');
+        this.sendSystemEvent(RACE_END_CHAR);
     }
 
     clearCountdown() {
@@ -116,19 +134,9 @@ class LedHandler {
     scheduleCountdown(startTimeMs) {
         if (!this.enabled || !this.port || !this.port.isOpen) return;
         this.clearCountdown();
-        
-        const now = Date.now();
-        const thresholds = [
-            { sec: 8, char: 'R' },
-            { sec: 5, char: '5' },
-            { sec: 4, char: '4' },
-            { sec: 3, char: '3' },
-            { sec: 2, char: '2' },
-            { sec: 1, char: '1' },
-            { sec: 0, char: 'G' }
-        ];
 
-        thresholds.forEach(t => {
+        const now = Date.now();
+        COUNTDOWN_SCHEDULE.forEach(t => {
             const targetTime = startTimeMs - (t.sec * 1000) - this.compensationMs;
             const delay = targetTime - now;
 

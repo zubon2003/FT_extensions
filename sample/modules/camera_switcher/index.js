@@ -1,5 +1,6 @@
 const { processEvents, disconnect } = require('./src/data-processor');
 const { setRaceLapCount } = require('./src/config');
+const logger = require('../core/logger.js');
 
 let eventQueue = [];
 let isProcessingEvent = false;
@@ -18,7 +19,7 @@ async function eventProcessor() {
     try {
         await processEvents(updateStatus, event);
     } catch (error) {
-        console.error('[CameraSwitcher] processing error:', error);
+        logger.error(`[CameraSwitcher] processing error: ${error.stack || error.message}`);
     } finally {
         isProcessingEvent = false;
         if (eventQueue.length > 0) setImmediate(eventProcessor);
@@ -31,7 +32,7 @@ async function triggerEvent(event) {
 }
 
 function init() {
-    console.log('[CameraSwitcher] init');
+    logger.info('[CameraSwitcher] init');
     triggerEvent({ type: 'initial' });
 }
 
