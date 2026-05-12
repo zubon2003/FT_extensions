@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Leaderboard</title>
+    <script src="/vendor/tailwind.js"></script>
+    <link href="/vendor/fonts/orbitron/900.css" rel="stylesheet">
+    <link href="/vendor/fonts/noto-sans-jp/700.css" rel="stylesheet">
+    <link href="/vendor/fonts/noto-sans-jp/900.css" rel="stylesheet">
+    <style>
+        body { background: #0f172a; color: #f1f5f9; font-family: 'Noto Sans JP', sans-serif; margin: 0; padding: 20px; }
+        #obs-area { background: #000a14; color: #00f2ff; min-height: 800px; padding: 40px; border: 1px solid #004466; border-radius: 8px; }
+        .sf-title { font-family: 'Orbitron'; text-shadow: 0 0 10px #00f2ff; border-bottom: 2px solid #00f2ff; padding-bottom: 10px; margin-bottom: 20px; text-transform: uppercase; }
+        .sf-row { 
+            background: rgba(0, 242, 255, 0.05); border-left: 6px solid #00f2ff; margin-bottom: 8px; padding: 12px 20px;
+            clip-path: polygon(0 0, 98% 0, 100% 20px, 100% 100%, 2% 100%, 0 80%);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="obs-area">
+        <h1 class="sf-title text-5xl font-black italic">Qualifying_Ranking</h1>
+        <div id="ranking-list" class="space-y-2">
+            <!-- Ranking rows will be inserted here -->
+        </div>
+    </div>
+
+    <script>
+        const rankingList = document.getElementById('ranking-list');
+        
+        function update() {
+            fetch('/api/leaderboard')
+                .then(res => res.json())
+                .then(data => {
+                    if (!data.ranking) return;
+                    
+                    // test.html の renderOBS('ranking') 内のロジックを完全再現
+                    rankingList.innerHTML = data.ranking.map((p, i) => {
+                        const rankColorClass = (i < 3 && p.time !== null) ? 'text-yellow-400' : 'text-slate-700';
+                        const rankText = p.time ? `#${i + 1}` : '#--';
+                        const timeText = p.time ? p.time.toFixed(3) : '--.---';
+                        
+                        // Display format: "4 Laps 23.555" only if count exists, otherwise just "23.555"
+                        const scoreDisplay = (p.time && p.count !== null) 
+                            ? `<span class="text-3xl text-cyan-400 mr-2">${p.count} Laps</span> ${timeText}` 
+                            : timeText;
+
+                        return `
+                            <div class="sf-row flex justify-between items-center">
+                                <div class="flex items-center gap-10">
+                                    <span class="text-4xl italic font-black ${rankColorClass}">${rankText}</span>
+                                    <span class="text-4xl font-black uppercase text-white">${p.pilotName}</span>
+                                </div>
+                                <span class="text-5xl font-mono font-black">${scoreDisplay}</span>
+                            </div>
+                        `;
+                    }).join('');
+                })
+                .catch(err => console.error('Fetch error:', err));
+        }
+
+        update();
+        setInterval(update, 5000);
+    </script>
+</body>
+</html>

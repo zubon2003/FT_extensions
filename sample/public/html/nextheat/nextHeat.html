@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Next Heat</title>
+    <script src="/vendor/tailwind.js"></script>
+    <link href="/vendor/fonts/orbitron/900.css" rel="stylesheet">
+    <link href="/vendor/fonts/noto-sans-jp/700.css" rel="stylesheet">
+    <link href="/vendor/fonts/noto-sans-jp/900.css" rel="stylesheet">
+    <style>
+        body { 
+            background: transparent; 
+            color: #f1f5f9; 
+            font-family: 'Noto Sans JP', sans-serif; 
+            margin: 0; 
+            padding: 0;
+            width: 1980px;
+            height: 1080px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #obs-area { 
+            background: #000a14; 
+            color: #00f2ff; 
+            width: 1920px;
+            padding: 40px; 
+            border: 1px solid #004466; 
+            border-radius: 8px;
+            position: relative;
+        }
+
+        .sf-title { 
+            font-family: 'Orbitron'; 
+            text-shadow: 0 0 10px #00f2ff; 
+            border-bottom: 2px solid #00f2ff; 
+            padding-bottom: 10px; 
+            margin-bottom: 40px; 
+            text-transform: uppercase; 
+        }
+
+        .pilot-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 24px;
+        }
+
+        .sf-card { 
+            background: rgba(0, 242, 255, 0.05); 
+            border-left: 6px solid; /* Color set dynamically */
+            padding: 0;
+            position: relative;
+            aspect-ratio: 4 / 5;
+            overflow: hidden;
+            clip-path: polygon(0 0, 95% 0, 100% 20px, 100% 100%, 5% 100%, 0 95%);
+        }
+
+        .pilot-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0.7;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+
+        .card-overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            padding: 20px;
+            background: linear-gradient(to top, rgba(0, 10, 20, 0.9) 0%, rgba(0, 10, 20, 0) 100%);
+            z-index: 2;
+        }
+
+        .pilot-name {
+            font-size: 2.5rem;
+            font-weight: 900;
+            color: white;
+            text-transform: uppercase;
+            line-height: 1.2;
+            margin-bottom: 4px;
+            word-break: break-all;
+        }
+.pilot-band {
+    font-family: 'Orbitron';
+    color: #00f2ff;
+    font-size: 2.25rem;
+    font-weight: 900;
+    text-shadow: 1px 1px 0 #404040, -1px -1px 0 #404040, 1px -1px 0 #404040, -1px 1px 0 #404040;
+}
+
+.rank-badge {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    font-family: 'Orbitron';
+    font-size: 4.5rem;
+    font-weight: 900;
+    font-style: italic;
+    color: #00f2ff;
+    text-shadow: 2px 2px 0 #404040, -2px -2px 0 #404040, 2px -2px 0 #404040, -2px 2px 0 #404040;
+    z-index: 3;
+}
+
+.time-badge {
+    font-family: 'Orbitron';
+    font-size: 1.8rem;
+    color: #94a3b8;
+    text-shadow: 1px 1px 0 #404040, -1px -1px 0 #404040, 1px -1px 0 #404040, -1px 1px 0 #404040;
+}        .no-heat {
+            text-align: center;
+            font-size: 3rem;
+            font-family: 'Orbitron';
+            color: #334155;
+            padding: 100px 0;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="obs-area">
+        <div class="flex justify-between items-end sf-title">
+            <h1 class="text-6xl font-black italic">Next_Heat_Pilots</h1>
+            <h2 id="next-heat-name" class="text-3xl font-black italic opacity-70">---</h2>
+        </div>
+
+        <div id="pilot-display-area" class="pilot-grid">
+            <!-- Pilot cards will be inserted here -->
+        </div>
+
+        <div id="no-heat-message" class="no-heat" style="display: none;">
+            NO_UPCOMING_HEATS
+        </div>
+
+        <!-- Bottom Line -->
+        <div class="mt-10 border-t-2 border-[#00f2ff] shadow-[0_0_10px_#00f2ff]"></div>
+    </div>
+
+    <script>
+        async function fetchNextHeat() {
+            try {
+                const response = await fetch('/api/nextheat');
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const data = await response.json();
+
+                const pilotDisplayArea = document.getElementById('pilot-display-area');
+                const noHeatMessage = document.getElementById('no-heat-message');
+                const heatNameEl = document.getElementById('next-heat-name');
+
+                if (data.heatName && data.pilots && data.pilots.length > 0) {
+                    noHeatMessage.style.display = 'none';
+                    pilotDisplayArea.style.display = 'grid';
+                    heatNameEl.textContent = data.heatName;
+
+                    pilotDisplayArea.innerHTML = data.pilots.slice(0, 4).map((pilot, index) => {
+                        const hasPilot = (pilot.name && pilot.name !== "");
+                        const c = pilot.color || { r: 0, g: 242, b: 255 };
+                        // Apply 50% brightness reduction
+                        const themeColor = `rgb(${Math.round(c.r * 0.5)}, ${Math.round(c.g * 0.5)}, ${Math.round(c.b * 0.5)})`;
+                        
+                        let imageUrl = '/assets/image.png';
+                        if (pilot.photopath) {
+                            if (pilot.photopath.startsWith('/api/')) {
+                                imageUrl = pilot.photopath;
+                            } else {
+                                imageUrl = `/api/pilot_image?path=${encodeURIComponent(pilot.photopath)}`;
+                            }
+                        }
+
+                        const rankText = (pilot.rank !== null) ? `Pos.${pilot.rank}` : '';
+                        
+                        let scoreText = '';
+                        if (pilot.time !== null && pilot.time < 999) {
+                            const timeStr = `${pilot.time.toFixed(3)}(s)`;
+                            if (pilot.count !== null) {
+                                scoreText = `${pilot.count} Laps ${timeStr}`;
+                            } else {
+                                scoreText = timeStr;
+                            }
+                        }
+
+                        const bandInfo = pilot.band || '---';
+
+                        return `
+                            <div class="sf-card" style="border-left-color: ${themeColor}; ${!hasPilot ? 'opacity: 0.3;' : ''}">
+                                ${hasPilot ? `<img src="${imageUrl}" class="pilot-image" onerror="this.onerror=null; this.src='/assets/image.png';">` : ''}
+                                ${rankText ? `<div class="rank-badge" style="color: ${themeColor};">${rankText}</div>` : ''}
+                                <div class="card-overlay">
+                                    <div class="flex justify-between items-end mb-1">
+                                        <div class="pilot-band" style="color: ${themeColor}">${bandInfo}</div>
+                                    </div>
+                                    <div class="pilot-name text-3xl">${pilot.name || (hasPilot ? 'UNKNOWN' : '---')}</div>
+                                    ${scoreText ? `<div class="time-badge text-right" style="color: ${themeColor}">RECORD: ${scoreText}</div>` : ''}
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+
+                } else {
+                    pilotDisplayArea.style.display = 'none';
+                    noHeatMessage.style.display = 'block';
+                    heatNameEl.textContent = '---';
+                }
+            } catch (error) {
+                console.error('Error fetching next heat data:', error);
+            }
+        }
+
+        fetchNextHeat();
+        setInterval(fetchNextHeat, 5000);
+    </script>
+</body>
+</html>

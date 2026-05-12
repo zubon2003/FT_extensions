@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Next Heat</title>
+    <link href="/vendor/fonts/audiowide/400.css" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: transparent;
+            /* Changed to transparent for OBS */
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: 'Audiowide', cursive;
+            /* Applied font */
+            color: white;
+        }
+
+        #countdown {
+            display: none;
+            /* Hidden by default */
+            text-align: center;
+            line-height: 1;
+        }
+
+        /* --- Text Styles --- */
+
+        .text-get-ready {
+            font-size: 8rem;
+            color: #00ffff;
+            /* Cyan */
+            text-shadow:
+                0 0 5px #fff,
+                0 0 10px #fff,
+                0 0 20px #00ffff,
+                0 0 40px #00ffff,
+                0 0 80px #00ffff;
+            transform: skewX(-15deg);
+        }
+
+        .text-count {
+            font-size: 18rem;
+            font-weight: bold;
+            color: #ff00de;
+            /* Magenta/Pink default */
+            text-shadow:
+                0 0 5px #fff,
+                0 0 10px #fff,
+                0 0 20px #ff00de,
+                0 0 40px #ff00de,
+                0 0 80px #ff00de;
+        }
+
+        .text-count.c-3,
+        .text-count.c-2,
+        .text-count.c-1 {
+            color: #ff3333;
+            /* Red for final countdown */
+            text-shadow:
+                0 0 5px #fff,
+                0 0 10px #fff,
+                0 0 20px #ff0000,
+                0 0 40px #ff0000,
+                0 0 80px #ff0000;
+        }
+
+        .text-go {
+            font-size: 20rem;
+            color: #39ff14;
+            /* Neon Green */
+            text-shadow:
+                0 0 10px #fff,
+                0 0 20px #fff,
+                0 0 40px #39ff14,
+                0 0 80px #39ff14,
+                0 0 120px #39ff14;
+        }
+
+        /* --- Animations --- */
+
+        /* Slide In for Get Ready */
+        .anim-slide {
+            animation: slide-in-blur 0.5s cubic-bezier(0.23, 1, 0.32, 1) forwards;
+        }
+
+        @keyframes slide-in-blur {
+            0% {
+                transform: translateX(-100vw) skewX(-30deg) scale(0.8);
+                opacity: 0;
+                filter: blur(20px);
+            }
+
+            60% {
+                transform: translateX(20px) skewX(-15deg) scale(1.1);
+                opacity: 1;
+                filter: blur(0);
+            }
+
+            100% {
+                transform: translateX(0) skewX(-15deg) scale(1);
+                opacity: 1;
+            }
+        }
+
+        /* Pop & Zoom for Numbers */
+        .anim-pop {
+            animation: pop-zoom 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        @keyframes pop-zoom {
+            0% {
+                transform: scale(3);
+                opacity: 0;
+                filter: blur(10px);
+            }
+
+            15% {
+                transform: scale(1);
+                opacity: 1;
+                filter: blur(0);
+            }
+
+            80% {
+                transform: scale(1);
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(0.8);
+                opacity: 0;
+            }
+        }
+
+        /* Explosion Shake for GO */
+        .anim-explode {
+            animation: explode-shake 1.5s ease-out forwards;
+        }
+
+        @keyframes explode-shake {
+            0% {
+                transform: scale(0.1);
+                opacity: 0;
+            }
+
+            10% {
+                transform: scale(1.5);
+                opacity: 1;
+            }
+
+            15% {
+                transform: scale(1.2) rotate(-5deg);
+            }
+
+            20% {
+                transform: scale(1.2) rotate(5deg);
+            }
+
+            25% {
+                transform: scale(1.2) rotate(-5deg);
+            }
+
+            30% {
+                transform: scale(1) rotate(0deg);
+            }
+
+            80% {
+                transform: scale(1);
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(2);
+                opacity: 0;
+            }
+        }
+
+        /* --- Cyber Circle --- */
+        #cyber-circle-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 800px;
+            height: 800px;
+            pointer-events: none;
+            display: none;
+            /* Controlled by JS */
+            align-items: center;
+            justify-content: center;
+            z-index: -1;
+            /* Behind text */
+        }
+
+        /* Base thin outer ring */
+        .cyber-ring-outer {
+            position: absolute;
+            width: 700px;
+            height: 700px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.2);
+        }
+
+        /* Segmented thick ring (Cyan blocks) */
+        .cyber-ring-segmented {
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            /* Use dashed border to create segments */
+            border: 40px dashed #00ffff;
+            box-shadow: 0 0 20px #00ffff, inset 0 0 20px #00ffff;
+            animation: spin-cw 20s linear infinite;
+            opacity: 0.8;
+        }
+
+        /* Inner thin ring with gaps */
+        .cyber-ring-inner {
+            position: absolute;
+            width: 480px;
+            height: 480px;
+            border-radius: 50%;
+            border: 4px solid white;
+            /* Create gaps using transparent borders on specific sides or clip-path */
+            border-left-color: transparent;
+            border-right-color: transparent;
+            box-shadow: 0 0 10px white;
+            animation: spin-ccw 5s linear infinite;
+        }
+
+        /* Smallest inner circle */
+        .cyber-ring-core {
+            position: absolute;
+            width: 400px;
+            height: 400px;
+            border-radius: 50%;
+            border: 1px solid rgba(0, 255, 255, 0.5);
+            box-shadow: inset 0 0 20px rgba(0, 255, 255, 0.2);
+        }
+
+        @keyframes spin-cw {
+            from {
+                transform: rotate(0deg);
+            }
+
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        @keyframes spin-ccw {
+            from {
+                transform: rotate(0deg);
+            }
+
+            to {
+                transform: rotate(-360deg);
+            }
+        }
+
+        /* Modifier for "GO!" state */
+        #cyber-circle-container.explode .cyber-ring-segmented {
+            animation: explode-ring 0.5s ease-out forwards;
+        }
+
+        #cyber-circle-container.explode .cyber-ring-inner,
+        #cyber-circle-container.explode .cyber-ring-outer,
+        #cyber-circle-container.explode .cyber-ring-core {
+            opacity: 0;
+            transition: opacity 0.1s;
+            /* Faster fade out */
+        }
+
+        @keyframes explode-ring {
+            0% {
+                transform: scale(1);
+                opacity: 1;
+                border-width: 40px;
+            }
+
+            100% {
+                transform: scale(2.5);
+                /* Expand more */
+                opacity: 0;
+                border-width: 0px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="status-indicator"
+        style="position: absolute; bottom: 10px; right: 10px; width: 10px; height: 10px; border-radius: 50%; background-color: red; z-index: 100;">
+    </div>
+
+    <!-- Cyber Circle Structure -->
+    <div id="cyber-circle-container">
+        <div class="cyber-ring-outer"></div>
+        <div class="cyber-ring-segmented"></div>
+        <div class="cyber-ring-inner"></div>
+        <div class="cyber-ring-core"></div>
+    </div>
+
+    <div id="countdown"></div>
+    <!-- Include Socket.IO client from the server -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const countdownEl = document.getElementById('countdown');
+        const cyberCircleEl = document.getElementById('cyber-circle-container');
+        const statusEl = document.getElementById('status-indicator');
+
+        let serverOffset = 0; 
+        let countdownInterval;
+
+        // --- Socket Events ---
+        socket.on("connect", () => {
+            console.log("Connected to relay server");
+            statusEl.style.backgroundColor = "orange";
+            const startTime = performance.now();
+            socket.emit("ts_server_time", (serverTime) => {
+                const endTime = performance.now();
+                const latency = (endTime - startTime) / 2000;
+                serverOffset = serverTime - (endTime / 1000) + latency;
+                statusEl.style.backgroundColor = "green";
+            });
+        });
+
+        socket.on("disconnect", () => {
+            statusEl.style.backgroundColor = "red";
+        });
+
+        socket.on("race_start", (data) => {
+            statusEl.style.display = 'none';
+            startCountdown(data.startTime);
+        });
+
+        // Audio is handled entirely on the server (VOICEVOX + countdown WAVs).
+        // The overlay is visual-only.
+
+        // --- Countdown Logic ---
+        function resetElement() {
+            countdownEl.className = '';
+            countdownEl.style.display = 'block';
+            countdownEl.style.opacity = '1';
+            void countdownEl.offsetWidth;
+        }
+
+        function showCyberCircle(show) {
+            cyberCircleEl.style.display = show ? 'flex' : 'none';
+            cyberCircleEl.className = '';
+        }
+
+        function startCountdown(startTimeSeconds) {
+            if (countdownInterval) clearInterval(countdownInterval);
+            const targetTime = startTimeSeconds;
+            let lastRemaining = -1;
+            let hasSpokenGetReady = false;
+
+            const updateTimer = () => {
+                const serverNow = (performance.now() / 1000) + serverOffset;
+                const diff = targetTime - serverNow;
+                const secondsLeft = Math.ceil(diff);
+
+                // Only trigger changes when the integer second changes
+                if (secondsLeft !== lastRemaining) {
+                    lastRemaining = secondsLeft;
+
+                    if (secondsLeft >= 6 && secondsLeft <= 8) {
+                        // --- GET READY (8-6 seconds before) ---
+                        if (countdownEl.textContent !== "GET READY") {
+                            countdownEl.textContent = "GET READY";
+                            resetElement();
+                            countdownEl.classList.add('text-get-ready', 'anim-slide');
+                        }
+                    } else if (secondsLeft > 8) {
+                        // --- Hide before 8 seconds ---
+                        countdownEl.style.display = 'none';
+                    } else if (secondsLeft >= 1) {
+                        // --- 5, 4, 3, 2, 1 ---
+                        countdownEl.textContent = secondsLeft;
+                        resetElement();
+                        countdownEl.classList.add('text-count', `c-${secondsLeft}`, 'anim-pop');
+                        showCyberCircle(true);
+                    } else if (secondsLeft === 0) {
+                        // --- GO! ---
+                        countdownEl.textContent = "GO!";
+                        resetElement();
+                        countdownEl.classList.add('text-go', 'anim-explode');
+                        cyberCircleEl.classList.add('explode');
+                    } else if (secondsLeft <= -3) {
+                        // --- Finished ---
+                        countdownEl.style.display = 'none';
+                        showCyberCircle(false);
+                        clearInterval(countdownInterval);
+                        statusEl.style.display = 'block';
+                    }
+                }
+            };
+            updateTimer();
+            countdownInterval = setInterval(updateTimer, 50);
+        }
+
+    </script>
+</body>
+
+</html>

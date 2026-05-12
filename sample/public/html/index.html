@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>TVPAS Integrated v2 — Control Panel</title>
+    <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/vendor/fontawesome/css/all.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #121212; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; }
+        .card { background-color: #1e1e1e; border: 1px solid #333; color: #e0e0e0; margin-bottom: 20px; }
+        .card-header { background-color: #2a2a2a; border-bottom: 1px solid #333; color: #bb86fc; font-weight: bold; }
+        .btn-primary { background-color: #bb86fc; border: none; color: #121212; font-weight: bold; }
+        .btn-primary:hover { background-color: #9965f4; color: #121212; }
+        .btn-outline-primary { color: #bb86fc; border-color: #bb86fc; }
+        .btn-outline-primary:hover, .btn-check:checked + .btn-outline-primary { background-color: #bb86fc; color: #121212; }
+        .output-square { width: 50px; height: 50px; border: 2px solid #555; display: inline-flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold; border-radius: 8px; margin-right: 10px; transition: all 0.3s; }
+        .output-square.active { background-color: #03dac6; border-color: #03dac6; color: #121212; box-shadow: 0 0 15px #03dac6; }
+        .form-control, .form-select { background-color: #333; border: 1px solid #444; color: #e0e0e0; }
+        .form-control:focus, .form-select:focus { background-color: #383838; color: #fff; border-color: #bb86fc; box-shadow: none; }
+        .nav-tabs .nav-link { color: #aaa; border: none; }
+        .nav-tabs .nav-link.active { background-color: #1e1e1e; color: #bb86fc; border: none; border-bottom: 3px solid #bb86fc; }
+        .nav-tabs .nav-link:hover { border: none; color: #fff; }
+        .pill { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; }
+        .pill-on  { background:#03dac6; color:#121212; }
+        .pill-off { background:#444; color:#bbb; }
+    </style>
+</head>
+<body>
+<nav class="navbar navbar-dark bg-black mb-4">
+    <div class="container">
+        <span class="navbar-brand mb-0 h1"><i class="fas fa-microchip me-2"></i>TVPAS Integrated v2</span>
+        <div class="d-flex gap-2">
+            <a href="/html/overlay" target="_blank" class="btn btn-sm btn-outline-info">Overlay</a>
+            <a href="/html/nextheat" target="_blank" class="btn btn-sm btn-outline-info">Next</a>
+            <a href="/html/heatresult" target="_blank" class="btn btn-sm btn-outline-info">Result</a>
+            <a href="/html/leaderboard" target="_blank" class="btn btn-sm btn-outline-info">Leaderboard</a>
+        </div>
+    </div>
+</nav>
+
+<div class="container">
+    <ul class="nav nav-tabs mb-4" role="tablist">
+        <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-system">System</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-voice">Voice</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-camera">Camera</button></li>
+    </ul>
+
+    <div class="tab-content">
+        <!-- System tab -->
+        <div class="tab-pane fade show active" id="tab-system">
+            <div class="card">
+                <div class="card-header">System Configuration</div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <label class="form-label">Server Port</label>
+                            <input type="number" id="sys_port" class="form-control" placeholder="8765">
+                            <div class="mt-2 small text-warning">
+                                <i class="fas fa-exclamation-triangle me-1"></i>
+                                Port change requires a manual server restart to take effect.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span>LED Configuration</span>
+                    <div class="form-check form-switch m-0">
+                        <input class="form-check-input" type="checkbox" id="led_enabled">
+                        <label class="form-check-label small" for="led_enabled">Enabled</label>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Serial COM Port</label>
+                            <select id="led_port" class="form-select"></select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Countdown Compensation (ms)</label>
+                            <input type="number" id="led_comp" class="form-control" min="0" max="1000" step="1" placeholder="0">
+                            <div class="form-text">Adjust LED sync (0-1000ms).</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Voice tab -->
+        <div class="tab-pane fade" id="tab-voice">
+            <div class="card">
+                <div class="card-header">VOICEVOX</div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <label class="form-label">URL</label>
+                            <input type="text" id="vv_url" class="form-control" placeholder="http://localhost:50021">
+                        </div>
+                        <div class="col-3">
+                            <label class="form-label">Speaker</label>
+                            <select id="vv_speaker" class="form-select"></select>
+                        </div>
+                        <div class="col-3">
+                            <label class="form-label">Volume</label>
+                            <input type="number" step="0.1" id="vv_volume" class="form-control">
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-3">
+                            <label class="form-label">Speed</label>
+                            <input type="number" step="0.1" id="vv_speed" class="form-control">
+                        </div>
+                        <div class="col-3">
+                            <label class="form-label">Audio delay (ms)</label>
+                            <input type="number" id="vv_delay" class="form-control">
+                        </div>
+                        <div class="col-3 form-check form-switch align-self-end">
+                            <input class="form-check-input" type="checkbox" id="vv_enabled">
+                            <label class="form-check-label">Enabled</label>
+                        </div>
+                        <div class="col-3 form-check form-switch align-self-end">
+                            <input class="form-check-input" type="checkbox" id="vv_play_server">
+                            <label class="form-check-label">Play on server</label>
+                        </div>
+                    </div>
+                    <button id="btn-test-voice" class="btn btn-outline-info">
+                        <i class="fas fa-volume-up me-2"></i>Test Voice
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Camera tab -->
+        <div class="tab-pane fade" id="tab-camera">
+            <div class="row">
+                <div class="col-md-7">
+                    <div class="card">
+                        <div class="card-header">Switching Mode</div>
+                        <div class="card-body">
+                            <div class="row g-2 mb-3">
+                                <div class="col-6"><input type="radio" class="btn-check" name="camera_mode" id="m_manual" value="Manual"><label class="btn btn-outline-primary w-100" for="m_manual">Manual</label></div>
+                                <div class="col-6"><input type="radio" class="btn-check" name="camera_mode" id="m_auto" value="Auto"><label class="btn btn-outline-primary w-100" for="m_auto">Auto</label></div>
+                            </div>
+                            <div class="mb-2 text-muted small">Position Focus</div>
+                            <div class="btn-group w-100 mb-3">
+                                <input type="radio" class="btn-check" name="camera_mode" id="m_pos1" value="Pos1"><label class="btn btn-outline-primary" for="m_pos1">Pos 1</label>
+                                <input type="radio" class="btn-check" name="camera_mode" id="m_pos2" value="Pos2"><label class="btn btn-outline-primary" for="m_pos2">Pos 2</label>
+                                <input type="radio" class="btn-check" name="camera_mode" id="m_pos3" value="Pos3"><label class="btn btn-outline-primary" for="m_pos3">Pos 3</label>
+                                <input type="radio" class="btn-check" name="camera_mode" id="m_pos4" value="Pos4"><label class="btn btn-outline-primary" for="m_pos4">Pos 4</label>
+                            </div>
+                            <div class="mb-2 text-muted small">Seat Focus</div>
+                            <div class="btn-group w-100 mb-3">
+                                <input type="radio" class="btn-check" name="camera_mode" id="m_seat0" value="Seat0"><label class="btn btn-outline-primary" for="m_seat0">Seat 0</label>
+                                <input type="radio" class="btn-check" name="camera_mode" id="m_seat1" value="Seat1"><label class="btn btn-outline-primary" for="m_seat1">Seat 1</label>
+                                <input type="radio" class="btn-check" name="camera_mode" id="m_seat2" value="Seat2"><label class="btn btn-outline-primary" for="m_seat2">Seat 2</label>
+                                <input type="radio" class="btn-check" name="camera_mode" id="m_seat3" value="Seat3"><label class="btn btn-outline-primary" for="m_seat3">Seat 3</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-5">
+                    <div class="card">
+                        <div class="card-header">Live Output</div>
+                        <div class="card-body text-center">
+                            <div class="output-square" id="out-1">1</div>
+                            <div class="output-square" id="out-2">2</div>
+                            <div class="output-square" id="out-3">3</div>
+                            <div class="output-square" id="out-4">4</div>
+                            <div class="mt-3 small text-muted" id="atem-status">ATEM: Disconnected</div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">Quick Settings</div>
+                        <div class="card-body">
+                            <label class="small mb-1">ATEM IP</label>
+                            <input type="text" id="cam_ip" class="form-control mb-3">
+                            <label class="small mb-1">Default Camera</label>
+                            <input type="number" id="cam_default" class="form-control mb-3">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="cam_enabled">
+                                <label class="form-check-label">Enable ATEM Control</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="mt-3 d-flex justify-content-between align-items-center">
+        <div id="status-msg" class="small"></div>
+    </div>
+</div>
+
+<script src="/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+let cfg = {};
+const socket = io();
+
+// Real-time camera updates via Socket.IO
+socket.on('camera_update', (cameraStatus) => {
+    updateCameraUI(cameraStatus);
+});
+
+async function switchCamera(num) {
+    try {
+        await fetch('/api/camera/switch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cameraInput: num })
+        });
+    } catch (e) {
+        console.error('Failed to switch camera:', e);
+    }
+}
+
+function updateCameraUI(cameraStatus) {
+    if (!cameraStatus) return;
+    document.querySelectorAll('.output-square').forEach(sq => sq.classList.remove('active'));
+    const prog = cameraStatus.atem?.program;
+    if (prog >= 1 && prog <= 4) {
+        const el = document.getElementById('out-' + prog);
+        if (el) el.classList.add('active');
+    }
+    const statusEl = document.getElementById('atem-status');
+    if (statusEl) {
+        statusEl.innerText = prog
+            ? `ATEM: Connected (Prog: ${prog})`
+            : 'ATEM: Disconnected';
+    }
+}
+
+async function fetchSpeakers() {
+    const url = document.getElementById('vv_url').value || 'http://localhost:50021';
+    const select = document.getElementById('vv_speaker');
+    const currentVal = select.value;
+    
+    try {
+        const res = await fetch(`${url}/speakers`);
+        if (!res.ok) throw new Error('Failed to fetch');
+        const speakers = await res.json();
+        
+        select.innerHTML = '';
+        speakers.forEach(s => {
+            s.styles.forEach(style => {
+                const opt = document.createElement('option');
+                opt.value = style.id;
+                opt.textContent = `${s.name} (${style.name})`;
+                select.appendChild(opt);
+            });
+        });
+        
+        // Restore previous selection if still exists
+        if (currentVal) select.value = currentVal;
+    } catch (e) {
+        select.innerHTML = '<option value="">(Error fetching speakers)</option>';
+        console.error('VOICEVOX fetch error:', e);
+    }
+}
+
+async function fetchSerialPorts() {
+    const select = document.getElementById('led_port');
+    const currentVal = select.value;
+    try {
+        const res = await fetch('/api/serial_ports');
+        const ports = await res.json();
+        select.innerHTML = '<option value="">-- Select Port --</option>';
+        ports.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.path;
+            opt.textContent = `${p.path} ${p.friendlyName ? '(' + p.friendlyName + ')' : ''}`;
+            select.appendChild(opt);
+        });
+        if (currentVal) select.value = currentVal;
+    } catch (e) {
+        console.error('Failed to fetch serial ports:', e);
+    }
+}
+
+async function loadConfig() {
+    cfg = await (await fetch('/api/config')).json();
+    const cam = cfg.camera_switcher || {};
+    const vv  = cfg.voicevox || {};
+    const ext = cfg.extension || {};
+
+    const modeEl = document.querySelector(`input[name="camera_mode"][value="${cam.switching_mode || 'Auto'}"]`);
+    if (modeEl) modeEl.checked = true;
+    document.getElementById('cam_ip').value = cam.atem_ip || '';
+    document.getElementById('cam_default').value = cam.default_camera ?? 4;
+    document.getElementById('cam_enabled').checked = !!cam.atem_enabled;
+
+    document.getElementById('vv_url').value = vv.url || 'http://localhost:50021';
+    
+    // Fetch speakers first then set the value
+    await fetchSpeakers();
+    document.getElementById('vv_speaker').value = vv.speaker ?? 3;
+
+    document.getElementById('vv_volume').value = vv.volume ?? 1;
+    document.getElementById('vv_speed').value = vv.speed ?? 1.2;
+    document.getElementById('vv_delay').value = vv.audio_delay_ms ?? 0;
+    document.getElementById('vv_enabled').checked = !!vv.enabled;
+    document.getElementById('vv_play_server').checked = !!vv.play_on_server;
+
+    const led = cfg.led || {};
+    document.getElementById('sys_port').value = ext.port ?? 8765;
+    
+    await fetchSerialPorts();
+    document.getElementById('led_enabled').checked = !!led.enabled;
+    document.getElementById('led_port').value = led.port || '';
+    document.getElementById('led_comp').value = led.compensation_ms ?? 0;
+
+    // Set up camera button click handlers
+    document.querySelectorAll('.output-square').forEach(sq => {
+        const num = parseInt(sq.id.split('-')[1]);
+        sq.onclick = () => switchCamera(num);
+    });
+}
+
+async function saveConfig() {
+    cfg.extension = cfg.extension || {};
+    cfg.extension.port = parseInt(document.getElementById('sys_port').value);
+
+    cfg.led = cfg.led || {};
+    cfg.led.enabled = document.getElementById('led_enabled').checked;
+    cfg.led.port = document.getElementById('led_port').value;
+    cfg.led.compensation_ms = parseInt(document.getElementById('led_comp').value) || 0;
+
+    cfg.camera_switcher = cfg.camera_switcher || {};
+    const mode = document.querySelector('input[name="camera_mode"]:checked');
+    cfg.camera_switcher.switching_mode = mode ? mode.value : 'Auto';
+    cfg.camera_switcher.atem_ip = document.getElementById('cam_ip').value;
+    cfg.camera_switcher.default_camera = parseInt(document.getElementById('cam_default').value);
+    cfg.camera_switcher.atem_enabled = document.getElementById('cam_enabled').checked;
+
+    cfg.voicevox = cfg.voicevox || {};
+    cfg.voicevox.url = document.getElementById('vv_url').value;
+    cfg.voicevox.speaker = parseInt(document.getElementById('vv_speaker').value);
+    cfg.voicevox.volume = parseFloat(document.getElementById('vv_volume').value);
+    cfg.voicevox.speed = parseFloat(document.getElementById('vv_speed').value);
+    cfg.voicevox.audio_delay_ms = parseInt(document.getElementById('vv_delay').value);
+    cfg.voicevox.enabled = document.getElementById('vv_enabled').checked;
+    cfg.voicevox.play_on_server = document.getElementById('vv_play_server').checked;
+
+    const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg)
+    });
+    const msg = document.getElementById('status-msg');
+    if (res.ok) {
+        msg.innerHTML = '<span class="text-success"><i class="fas fa-check-circle me-1"></i>Saved</span>';
+    } else {
+        msg.innerHTML = '<span class="text-danger">Save failed</span>';
+    }
+    setTimeout(() => msg.innerHTML = '', 3000);
+}
+
+// Auto-save everything when changed
+document.querySelectorAll('input, select').forEach(el => {
+    el.onchange = async () => {
+        if (el.id === 'vv_url') await fetchSpeakers();
+        await saveConfig();
+    };
+});
+
+document.querySelectorAll('input[name="camera_mode"]').forEach(r => {
+    r.onchange = saveConfig;
+});
+
+document.getElementById('btn-test-voice').onclick = async () => {
+    const btn = document.getElementById('btn-test-voice');
+    btn.disabled = true;
+    try { await fetch('/api/test_voice'); } finally { btn.disabled = false; }
+};
+
+async function poll() {
+    try {
+        const status = await (await fetch('/api/status')).json();
+        // Update camera UI using shared function
+        updateCameraUI(status.camera);
+    } catch (_e) { /* ignore */ }
+}
+
+(async () => {
+    await loadConfig();
+    setInterval(poll, 1000);
+    poll();
+})();
+</script>
+</body>
+</html>

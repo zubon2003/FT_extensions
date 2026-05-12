@@ -1,0 +1,11 @@
+{
+  "lap": "{pilot}、ラップ{lap}、{time}秒",
+  "lapNoTime": "{pilot}、ラップ{lap}",
+  "goal": "{pilot}、ゴール!トータル{total}秒",
+  "goalNoTime": "{pilot}、ゴール!",
+  "start": "{pilot}、スタート",
+  "crash": "{pilot}、クラッシュアウト",
+  "raceEnd": "レース終了",
+  "raceCancelled": "レース中止",
+  "raceFailed": "レース失敗"
+}

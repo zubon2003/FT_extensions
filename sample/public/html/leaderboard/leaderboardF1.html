@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Timing</title>
+    <link href="/vendor/fonts/titillium-web/400.css" rel="stylesheet">
+    <link href="/vendor/fonts/titillium-web/600.css" rel="stylesheet">
+    <link href="/vendor/fonts/titillium-web/700.css" rel="stylesheet">
+    <link href="/vendor/fonts/roboto-mono/500.css" rel="stylesheet">
+    <style>
+        :root {
+            --f1-black: #15151e;
+            --f1-dark-grey: #23232e;
+            --f1-light-grey: #383842;
+            --f1-white: #ffffff;
+            --f1-red: #e10600;
+            --f1-purple: #b300e5; /* Fastest lap */
+        }
+
+        body {
+            font-family: 'Titillium Web', sans-serif;
+            background-color: var(--f1-black);
+            color: var(--f1-white);
+            margin: 0;
+            padding: 30px; /* 20px * 1.5 */
+            overflow-y: scroll;
+        }
+
+        .container {
+            width: 450px;
+            margin: auto;
+        }
+
+        .header {
+            background-color: var(--f1-dark-grey);
+            padding: 22.5px 37.5px; /* 15px * 1.5, 25px * 1.5 */
+            border-radius: 12px; /* 8px * 1.5 */
+            margin-bottom: 30px; /* 20px * 1.5 */
+            border-left: 7.5px solid var(--f1-red); /* 5px * 1.5 */
+        }
+
+        h1 {
+            color: var(--f1-white);
+            font-size: 36px; /* 24px * 1.5 */
+            margin: 0 0 15px 0; /* 10px * 1.5 */
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        
+        #leaderboard-info p {
+            margin: 3px 0; /* 2px * 1.5 */
+            font-size: 21px; /* 14px * 1.5 */
+            color: #ccc;
+        }
+
+        #leaderboard-info strong {
+            color: var(--f1-white);
+            font-weight: 600;
+        }
+
+        /* --- Timing Table (DIV-based) --- */
+        .timing-table-wrapper {
+            background-color: var(--f1-dark-grey);
+            border-radius: 12px; /* 8px * 1.5 */
+            overflow: hidden;
+        }
+
+        .timing-header, .ranking-row {
+            display: flex;
+            align-items: center;
+            padding: 4px 22.5px; /* Reduced vertical padding */
+        }
+
+        .timing-header {
+            background-color: var(--f1-light-grey);
+            text-transform: uppercase;
+            color: #ccc;
+        }
+
+        /* This rule ensures all header items are styled identically */
+        .timing-header > div {
+            font-family: 'Titillium Web', sans-serif;
+            font-size: 24px;
+            font-weight: 700;
+        }
+
+        .timing-header > div, .ranking-row > div {
+            flex-shrink: 0;
+        }
+
+        .timing-header > .pilot-name {
+            padding-left: 60px;
+        }
+
+        
+
+        .ranking-row {
+            border-bottom: 1.5px solid var(--f1-light-grey); /* 1px * 1.5 */
+            height: 29px; /* Reduced height */
+        }
+        .ranking-row:last-child {
+            border-bottom: none;
+        }
+
+        .rank-number {
+            display: inline-block;
+            width: 40px;
+            text-align: right;
+            margin-right: 10px;
+            font-family: 'Roboto Mono', monospace;
+            font-size: 24px;
+        }
+
+        .pilot-name {
+            display: flex;
+            align-items: center;
+            font-weight: 600;
+            width: 300px; /* Adjusted for removed Pos and shrunk Time */
+            flex-grow: 0;
+            flex-shrink: 0;
+            font-size: 24px; /* デフォルトの16px * 1.5 */
+            box-sizing: border-box;
+        }
+
+        .team-color-bar {
+            display: inline-block;
+            width: 6px; /* 4px * 1.5 */
+            height: 20px; /* Reduced height */
+            margin-right: 15px; /* 10px * 1.5 */
+            border-radius: 3px; /* 2px * 1.5 */
+        }
+
+        .time {
+            font-family: 'Roboto Mono', monospace;
+            font-size: 24px; /* Matched with pilot-name */
+            width: 105px; /* Shrunk for xxx.xxx format */
+            font-weight: 600; /* Matched with pilot-name */
+        }
+        
+        .pilot-name.last-heat {
+            color: #00A3FF; /* Pilot name is blue if in last heat */
+        }
+        .time.last-heat {
+            color: #00A3FF; /* Time is blue only if updated in last heat */
+        }
+        
+        .message { margin-top: 22.5px; /* 15px * 1.5 */ padding: 15px; /* 10px * 1.5 */ border-radius: 6px; /* 4px * 1.5 */ text-align: center; }
+        .error { background-color: #f8d7da; color: #721c24; border: 1.5px solid #f5c6cb; /* 1px * 1.5 */ }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Live Timing</h1>
+            <div id="leaderboard-info"></div>
+        </div>
+        
+        <div class="timing-table-wrapper">
+            <div class="timing-header">
+                <div class="pilot-name">Pilot</div>
+                <div class="time">Time</div>
+            </div>
+            <div id="ranking-list">
+                <!-- Ranking rows will be inserted here -->
+            </div>
+        </div>
+        <div id="message" class="message"></div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const leaderboardInfoDiv = document.getElementById('leaderboard-info');
+            const rankingList = document.getElementById('ranking-list');
+            const messageDiv = document.getElementById('message');
+
+            const displayLimit = 10;
+            let allRankingData = [];
+            let currentPageIndex = 0;
+            let totalPages = 0;
+            let pageChangeInterval;
+            let dataUpdateInterval;
+
+            // New variables to hold data about the last heat
+            let lastHeatName = null;
+            let lastHeatPilotIds = [];
+
+            /**
+             * Converts a string to a unique HSL color.
+             * @param {string} str The input string (e.g., pilotId).
+             * @param {number} s Saturation percentage.
+             * @param {number} l Lightness percentage.
+             * @returns {string} HSL color string.
+             */
+            const stringToHslColor = (str, s, l) => {
+                let hash = 0;
+                for (let i = 0; i < str.length; i++) {
+                    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+                }
+                const h = hash % 360;
+                return `hsl(${h}, ${s}%, ${l}%)`;
+            };
+
+            const renderPage = () => {
+                // Add a fade-out/fade-in effect for smoother transitions
+                rankingList.style.transition = 'opacity 0.3s ease-in-out';
+                rankingList.style.opacity = 0;
+
+                setTimeout(() => {
+                    rankingList.innerHTML = ''; // Clear existing rows
+
+                    if (allRankingData.length === 0) {
+                        rankingList.innerHTML = '<div style="text-align: center; padding: 20px;">NO DATA AVAILABLE</div>';
+                        rankingList.style.opacity = 1;
+                        return;
+                    }
+
+                    const startIndex = currentPageIndex * displayLimit;
+                    const dataToRender = allRankingData.slice(startIndex, startIndex + displayLimit);
+
+                    // If there are multiple pages, ensure the list always has `displayLimit` items
+                    // by padding with placeholders. This keeps the table height consistent.
+                    if (totalPages > 1) {
+                        while (dataToRender.length < displayLimit) {
+                            dataToRender.push({ pilotId: `dummy-${dataToRender.length}`, pilotName: null });
+                        }
+                    }
+
+                    const fastestTime = allRankingData.length > 0 ? allRankingData[0].time : null;
+
+                    dataToRender.forEach((item, index) => {
+                        const rank = startIndex + index + 1;
+                        const rowDiv = document.createElement('div');
+                        rowDiv.className = 'ranking-row';
+
+                        // Handle placeholder rows
+                        if (item.pilotName === null) {
+                            rankingList.appendChild(rowDiv);
+                            return; // continue to next item
+                        }
+
+                        const pilotDiv = document.createElement('div');
+                        pilotDiv.className = 'pilot-name';
+                        const teamColor = stringToHslColor(item.pilotId, 80, 60);
+                        pilotDiv.innerHTML = `<span class="rank-number">${rank}</span><span class="team-color-bar" style="background-color: ${teamColor};"></span>${item.pilotName}`;
+
+                        const timeDiv = document.createElement('div');
+                        timeDiv.className = 'time';
+                        // Check if time exists before calling toFixed
+                        timeDiv.textContent = item.time ? item.time.toFixed(3) : '';
+                        
+                        // This logic was for the fastest lap, which is now unstyled per user request.
+                        // The class is added, but it has no styles. This is kept in case styling is re-added later.
+                        if (item.time === fastestTime) {
+                            timeDiv.classList.add('fastest');
+                        }
+
+                        // --- NEW LOGIC for last heat styling ---
+                        const wasInLastHeat = lastHeatPilotIds.includes(item.pilotId);
+                        const bestTimeFromLastHeat = item.heatName === lastHeatName;
+
+                        if (wasInLastHeat) {
+                            pilotDiv.classList.add('last-heat'); // Pilot name is always blue if in last heat
+                        }
+                        // タイムがそのパイロットのベストタイムであり、かつ最後に飛行したヒートで記録されたタイムであれば青
+                        if (wasInLastHeat && bestTimeFromLastHeat) {
+                            timeDiv.classList.add('last-heat');
+                        }
+                        // --- END NEW LOGIC ---
+
+                        rowDiv.appendChild(pilotDiv);
+                        rowDiv.appendChild(timeDiv);
+                        rankingList.appendChild(rowDiv);
+                    });
+                    
+                    // Reset transform and fade in
+                    rankingList.style.transform = 'translateY(0px)';
+                    rankingList.style.opacity = 1;
+                }, 300); // Wait for fade-out to complete
+            };
+
+            const startPageCycling = () => {
+                if (pageChangeInterval) clearInterval(pageChangeInterval);
+
+                totalPages = Math.ceil(allRankingData.length / displayLimit);
+
+                if (totalPages <= 1) { // 1ページ以下なら切り替え不要
+                    currentPageIndex = 0;
+                    renderPage();
+                    return;
+                }
+
+                // Initial render before interval starts
+                renderPage(); 
+
+                pageChangeInterval = setInterval(() => {
+                    currentPageIndex++;
+                    if (currentPageIndex >= totalPages) {
+                        currentPageIndex = 0; // Loop back to the first page
+                    }
+                    renderPage();
+                }, 5000); // 5秒ごとにページを切り替え
+            };
+
+            const updateLeaderboard = () => {
+                fetch('/api/leaderboard')
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.error) {
+                            messageDiv.className = 'message error';
+                            messageDiv.textContent = 'Leaderboardの読み込みに失敗しました: ' + data.error;
+                            return;
+                        }
+
+                        leaderboardInfoDiv.innerHTML = `
+                            <p>EVENT: <strong>${data.eventName || 'N/A'}</strong></p>
+                            <p>ROUND: <strong>${data.roundName}</strong></p>
+                            <p>SORTING BY: <strong>${data.sortedByDisplayName}</strong></p>
+                        `;
+
+                        // Only update and reset if the data has actually changed
+                        const newRankingJson = JSON.stringify(data.ranking);
+                        if (JSON.stringify(allRankingData) !== newRankingJson) {
+                            console.log("Leaderboard data updated. Resetting view.");
+                            allRankingData = data.ranking;
+                            
+                            // Store the new data for the last heat
+                            lastHeatName = data.lastHeatName || null;
+                            lastHeatPilotIds = data.lastHeatPilotIds || [];
+
+                            currentPageIndex = 0;
+                            if (pageChangeInterval) clearInterval(pageChangeInterval);
+                            startPageCycling();
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error loading leaderboard:', error);
+                        messageDiv.className = 'message error';
+                        messageDiv.textContent = 'Leaderboardの読み込み中にエラーが発生しました。';
+                        if (pageChangeInterval) clearInterval(pageChangeInterval);
+                    });
+            };
+
+            // Initial data load
+            updateLeaderboard();
+            // Set interval for subsequent data updates
+            dataUpdateInterval = setInterval(updateLeaderboard, 5000);
+        });
+    </script>
+</body>
+</html>
