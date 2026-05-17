@@ -6,6 +6,10 @@
 //
 //   R → ready / 5 4 3 2 1 → countdown / G → go / E → blank
 //
+// After 'G' (go) the panel shows the go frame and then blanks itself
+// GO_OFF_DELAY_MS later. Any other system frame arriving within that
+// window cancels the auto-off (so a new race's "ready" is not wiped).
+//
 // Architecture: at boot all seven PROGMEM frames are decoded into separate
 // RAM-resident CRGB[] buffers. The ESP-NOW receive callback only flips a
 // volatile pointer to the next frame to display; loop() picks it up and
@@ -90,16 +94,29 @@ static void decodeFrame(CRGB* dst, const uint8_t* src) {
 
 static volatile CRGB* pendingFrame = nullptr;
 
+// Auto-off after Go: when 'G' is shown, blank the whole panel
+// GO_OFF_DELAY_MS later. 0 = disarmed. Any other system frame
+// (R/5/4/3/2/1/E) cancels a pending auto-off so a new race's "ready"
+// arriving within the window is not wiped. Written in the ESP-NOW
+// callback, consumed in loop(); volatile + 32-bit aligned word (atomic
+// on ESP32) so no further synchronisation is needed.
+#define GO_OFF_DELAY_MS 3000
+static volatile unsigned long goOffAtMs = 0;
+
 static void onSystem(char cmd) {
     switch (cmd) {
-        case 'R': pendingFrame = buf_ready; break;
-        case '5': pendingFrame = buf_5;     break;
-        case '4': pendingFrame = buf_4;     break;
-        case '3': pendingFrame = buf_3;     break;
-        case '2': pendingFrame = buf_2;     break;
-        case '1': pendingFrame = buf_1;     break;
-        case 'G': pendingFrame = buf_go;    break;
-        case 'E': pendingFrame = buf_blank; break;
+        case 'R': pendingFrame = buf_ready; goOffAtMs = 0; break;
+        case '5': pendingFrame = buf_5;     goOffAtMs = 0; break;
+        case '4': pendingFrame = buf_4;     goOffAtMs = 0; break;
+        case '3': pendingFrame = buf_3;     goOffAtMs = 0; break;
+        case '2': pendingFrame = buf_2;     goOffAtMs = 0; break;
+        case '1': pendingFrame = buf_1;     goOffAtMs = 0; break;
+        case 'G':
+            pendingFrame = buf_go;
+            goOffAtMs = millis() + GO_OFF_DELAY_MS;
+            if (goOffAtMs == 0) goOffAtMs = 1;  // 0 is the disarmed sentinel
+            break;
+        case 'E': pendingFrame = buf_blank; goOffAtMs = 0; break;
         default:                            break;
     }
 #if defined(YLED_DEBUG)
@@ -174,6 +191,15 @@ void loop() {
     if (frame) {
         pendingFrame = nullptr;
         memcpy(leds, frame, sizeof(leds));
+        FastLED.show();
+    }
+
+    // Auto-off: GO_OFF_DELAY_MS after 'G', blank the panel once. The
+    // signed millis() difference is rollover-safe for the 3 s window.
+    unsigned long off = goOffAtMs;
+    if (off != 0 && (long)(millis() - off) >= 0) {
+        goOffAtMs = 0;
+        FastLED.clear();    // zeroes the led buffer; show() pushes it out
         FastLED.show();
     }
 }
