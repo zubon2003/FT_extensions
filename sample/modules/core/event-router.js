@@ -53,7 +53,14 @@ function createRouter(services) {
     }
 
     function updateSeatMap(pilots) {
-        if (!pilots || !Array.isArray(pilots)) return;
+        if (!Array.isArray(pilots) || pilots.length === 0) return;
+        // An empty list is NOT "zero pilots" — per spec it is the
+        // invalidation / "no roster" signal: NextRace with no next race (§7.2),
+        // RaceResult result-clear (§7.5), startup re-load. Clearing here would
+        // wipe the current race's seat map mid-heat and silently kill the LED
+        // (voice/camera survive because they don't use this map). Keep the last
+        // known roster instead.
+        //
         // Rebuild fresh — stale entries from the previous race would mis-map
         // seats when pilot rosters change between heats.
         pilotSeatByName.clear();
