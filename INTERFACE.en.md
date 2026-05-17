@@ -79,6 +79,8 @@ Recommended Extension architecture: one HTTP server thread that only enqueues, p
 2. Deliver FPVTrackside's filesystem paths so the Extension can resolve relative file references found in later events (e.g. `photoPath`).
 3. Allow the Extension to be started **before** FPVTrackside (the Extension waits idle until the first Hello arrives).
 
+Hello bootstraps the receiver into a **peer** of FPVTrackside rather than a passive log sink. By the time the first non-Hello event arrives, the Extension already knows where pilot media lives (`paths.pilotsDirectory`, `paths.workingDirectory`), what display precision FPVTrackside is using (`decimalPlaces`), how many sectors a lap has and which gate is the lap-loop (`timingSystem.splitsPerLap`, per-system `index`/`role`/`type`), and the exact thresholds FPVTrackside applies for holeshot and duplicate-lap filtering (`eventSettings`). A generic LED/TTS/scoreboard receiver can therefore auto-configure its sector graphics, render lap times that match the operator's screen down to the last digit, and reproduce FPVTrackside's filter decisions without diverging — none of which is possible from the legacy detection stream alone.
+
 ### 3.2 Behavior on the FPVTrackside side
 
 - On `ExtensionNotifier` startup, send a Hello PUT immediately (`t = 0`).
@@ -121,16 +123,22 @@ Recommended Extension architecture: one HTTP server thread that only enqueues, p
     "splitsPerLap": 4,
     "allDummy": false,
     "systems": [
-      { "index": 0, "type": "LapRFTimingSystem", "role": "Split" },
+      { "index": 0, "type": "LapRFTimingSystem", "role": "Prime" },
       { "index": 1, "type": "LapRFTimingSystem", "role": "Split" },
       { "index": 2, "type": "LapRFTimingSystem", "role": "Split" },
-      { "index": 3, "type": "LapRFTimingSystem", "role": "Prime" }
+      { "index": 3, "type": "LapRFTimingSystem", "role": "Split" }
     ]
   },
   "eventSettings": {
     "raceStartIgnoreDetections": 0.5,
     "minLapTime": 5.0,
     "primaryTimingSystemLocation": "EndOfLap"
+  },
+  "channelSettings": {
+    "channels": [
+      { "band": "Raceband", "number": 1, "frequency": 5658, "colorR": 255, "colorG": 0, "colorB": 0 },
+      { "band": "Raceband", "number": 2, "frequency": 5695, "colorR": 0, "colorG": 255, "colorB": 0 }
+    ]
   }
 }
 ```
@@ -154,10 +162,11 @@ Recommended Extension architecture: one HTTP server thread that only enqueues, p
 | `timingSystem.splitCount` | int | Number of "Split" systems (intermediate sector detectors). |
 | `timingSystem.splitsPerLap` | int | **Sectors per lap.** Equals `splitCount + 1`. The "+1" accounts for the lap-end detection at the Prime system, which is itself the last sector of the lap. |
 | `timingSystem.allDummy` | bool | True if every configured system is a dummy/simulated timer. Computed from configured types only — does **not** require connections. |
-| `timingSystem.systems[]` | array | Per-system list, ordered by sector traversal (Splits first in order, then the Prime). Each entry: `index` (0-based sector index used in `DetectionExt.timingSystemIndex`), `type` (C# class name e.g. `"LapRFTimingSystem"`, `"DummyTimingSystem"`), `role` (`"Split"` or `"Prime"`). |
+| `timingSystem.systems[]` | array | Per-system list. **Index numbering matches `DetectionExt.timingSystemIndex` exactly**: index `0` is the Prime (lap-loop) system, indices `1..splitCount` are Split (intermediate) systems in sector traversal order. The array is ordered by `index` ascending. Each entry: `index` (0-based), `type` (C# class name e.g. `"LapRFTimingSystem"`, `"DummyTimingSystem"`), `role` (`"Split"` or `"Prime"`). Receivers can look up the role of a detection's gate via `systems[detection.timingSystemIndex]`. |
 | `eventSettings.raceStartIgnoreDetections` | number (seconds) | Event setting "Race Start Ignore Detections". Detections within this many seconds after `RaceStart.actualStart` are filtered by FPVTrackside. The Extension can use this to display "settling" indicators during the early race. |
 | `eventSettings.minLapTime` | number (seconds) | Event setting "Smart Minimum Lap Time". Lap times faster than this are filtered as duplicate detections by FPVTrackside. |
 | `eventSettings.primaryTimingSystemLocation` | string | Event setting "Primary Timing System Location". One of `"Holeshot"` or `"EndOfLap"`. `Holeshot` = the lap-loop sits at the start line, so the very first lap-end crossing is a holeshot (lap 0 → lap 1 transition, not a real lap). `EndOfLap` = the lap-loop is past the start line, so the first lap-end crossing IS the end of lap 1 (no holeshot exists). The Extension uses this to decide whether to display / suppress the holeshot crossing. |
+| `channelSettings.channels[]` | ChannelInfo[] | Event-level "Channel Settings": the channels defined for this event. Each entry is a §6.1 `ChannelInfo`. `colorR/G/B` are the per-event assigned display colors. Receivers can use this for un-assigned channel rendering or non-race channel listings. |
 
 The `timingSystem` block describes the **configured topology** as known to FPVTrackside at Hello-send time. Connection state is intentionally excluded: at FPVTrackside startup most systems are still negotiating, so a connected/disconnected flag at this point would be misleading. The Extension can rely on `count`, `splitsPerLap`, and the per-system `index`/`role`/`type` for routing logic.
 
@@ -267,7 +276,7 @@ These structures are referenced by multiple event types.
 
 | Field | Type | Description |
 |---|---|---|
-| `band` | string | `R` / `F` / `A` / `B` / `E` / `D` / `L` (raw enum name) |
+| `band` | string | Raw C# `Band` enum name. One of: `Fatshark`, `Raceband`, `A`, `B`, `E`, `DJIFPVHD`, `SharkByte` (alias `HDZero`, same enum value), `LowBand`, `Diatone`, `DJIO3`, `DJIO4`, `WalkSnail`, or `None` for an unassigned channel. New bands may be added in future FPVTrackside versions; receivers MUST treat the value as an opaque string and not assume the list is closed. |
 | `number` | int | 1..8 typical |
 | `frequency` | int | MHz |
 | `ColorR/G/B` | int (0..255) | Display color assigned for this channel in this race |
@@ -410,6 +419,8 @@ This section lists every `type` value the Extension may receive (other than `Hel
 
 Fires when the current race changes (a new race is loaded into the manager). Arrives before `RacePreStart`.
 
+**Also re-fires immediately after `RaceManager.ResetRace`** — the reset race is passed back through `RaceLoaded` even when the operator re-selects the same race. Because clearing results can stale the receiver's pilot dictionary and derived state, this re-fire pairs with the `RaceResult.pilots=[]` "results invalidated" signal to resupply the full state. Receivers must treat this as an idempotent state replace (consecutive deliveries of the same `round`/`race` are normal, not an error).
+
 ```json
 {
   "type": "RaceLoaded",
@@ -485,17 +496,26 @@ Lifecycle events. All share the same body.
 | `failure` | bool | Present on `RaceCancelled` only. True if cancelled due to system failure rather than operator action. |
 
 The five `type` values:
-- `RacePreStart` — race armed, countdown about to begin. **Includes `scheduledStart`.**
+- `RacePreStart` — race armed, **the randomised start time has just been resolved**, countdown about to begin. **Includes `scheduledStart`.** Fires from `RaceManager.OnRaceStartScheduled` (not `OnRacePreStart`), so the timestamp is the post-randomisation planned moment, not an upper-bound estimate.
 - `RaceStart` — countdown over, race timer starts now. **Includes `actualStart`.**
 - `RaceTimesUp` — race time elapsed (does not necessarily end the race; pilots may still be completing the in-progress lap)
 - `RaceEnd` — race over (all pilots finished or stopped)
 - `RaceCancelled` — race aborted
 
+`RacePreStart.scheduledStart` is the **exact planned start instant** chosen by `StartRaceInLessThan(MinStartDelay, MaxStartDelay)` — a uniformly distributed pick in `[Now + MinStartDelay, Now + MaxStartDelay]`. The value is delivered before the wait loop runs, so receivers have the full random window (~`MaxStartDelay − MinStartDelay`, minus a few network/serial milliseconds) to prepare their start cues. This is particularly valuable for **accessibility** scenarios: a pilot who is deaf, hard-of-hearing, or running with ambient noise that masks the audio "GO" beep can rely on an LED panel or strobe anchored to `scheduledStart`, getting the same fair start signal as every other pilot — even when the event uses randomised start delays (`MinStartDelay != MaxStartDelay`). Operators can also audit race-start jitter after the fact by comparing `scheduledStart` (from `RacePreStart`) with `actualStart` (from `RaceStart`).
+
 ### 7.4 `DetectionExt`
 
 The most frequent event. Fires once per gate detection (sector pass or lap end). Replaces the legacy `DetectionDetails` for Extension purposes; both may be present on the wire when the legacy notifier is also enabled.
 
-**De-duplication**: the sender filters by detection ID so the same detection is never emitted twice in this event type, even if FPVTrackside internally fires both `OnSplitDetection` and `OnLapDetected` for the same underlying detection.
+Compared to legacy `DetectionDetails`, `DetectionExt` ships several pre-computed fields that previously had to be derived by the receiver:
+
+- **`sectorTime`** — time spent in the sector that ended at this detection. Legacy delivered only the cumulative `Time`, forcing receivers to remember each pilot's previous detection and compute deltas (with no defense against missed events).
+- **`positionSnapshot[]`** — full leaderboard at this instant (every pilot, not just the detected one), already ordered by `Race.GetTrackPosition`. Legacy carried only the detected pilot's own `Position`.
+- **`raceFinishedForPilot`**, **`valid`**, **`lapTimeSoFar`**, **`raceSector`** — race-completion flag, filter-validity flag, in-progress lap time, and the cumulative ordering key.
+- **`round` / `race` / `raceType`** — each detection identifies its own race, so receivers no longer have to correlate against the most recent `RaceState`.
+
+**De-duplication**: the sender filters by detection ID so the same detection is never emitted twice in this event type, even if FPVTrackside internally fires both `OnSplitDetection` and `OnLapDetected` for the same underlying detection. (Legacy `RemoteNotifier` did **not** deduplicate, so every lap-loop crossing was delivered twice — receivers were responsible for filtering.)
 
 ```json
 {
@@ -531,7 +551,7 @@ The most frequent event. Fires once per gate detection (sector pass or lap end).
 | `timingSystemIndex` | int | Index of the timing system (0-based) that produced the detection — this corresponds to a physical gate. |
 | `isLapEnd` | bool | True for the lap-loop crossing; false for intermediate sectors. |
 | `lapNumber` | int | 0-based lap currently being run (or just completed if `isLapEnd`). |
-| `sectorIndex` | int | Within-lap sector index (1-based). For `IsLapEnd=true`, this is the final sector of the lap. |
+| `sectorIndex` | int | Within-lap sector index (1-based). Computed as `(timingSystemIndex % splitsPerLap) + 1` (or `Max(1, timingSystemIndex + 1)` when no inner sectors are configured). Because the Prime/lap-loop system has `timingSystemIndex=0`, **its `sectorIndex` is `1`** — interpret a lap-end crossing as "S1 of the next lap", not "the final sector of the just-completed lap". Receivers that need an "end-of-lap" sector label should derive it from `splitsPerLap` and `isLapEnd`, not from this field. |
 | `raceSector` | int | Cumulative sector index since race start, encoded as `lap × 100 + timingSystemIndex`. Note: the `100` is a fixed multiplier (not `splitsPerLap`) and the index portion is the raw 0-based `timingSystemIndex` (Goal = 0), **not** the 1-based `sectorIndex` field above. Requires `splitsPerLap ≤ 100` for ordering to be unambiguous. Used internally for ordering — same value as `PositionEntry.raceSector`. |
 | `raceTime` | number (seconds) | Seconds since `RaceStart.actualStart` for this detection. |
 | `sectorTime` | number (seconds) \| null | Time taken to traverse the sector that ended at this detection. `null` if no preceding detection exists for this pilot in this lap (e.g. holeshot). |
@@ -547,7 +567,10 @@ The most frequent event. Fires once per gate detection (sector pass or lap end).
 
 ### 7.5 `RaceResult`
 
-Fires after `RaceEnd`, once final results are computed.
+Fires whenever `ResultManager` reports a result change for a race. Two contexts:
+
+1. **End-of-race finalization** — fired **immediately before `RaceEnd`** (not after). The typical end-of-race sequence is `RaceResult` → `StageRanking` (if the race belongs to a stage) → `RaceEnd`. Treat `RaceResult` as a leading indicator that the race is wrapping up; do not wait for `RaceEnd` to render results.
+2. **Result clear** — fired when the race's stored results are cleared. This happens during `RaceManager.ResetRace` (operator action) and also automatically at FPVTrackside startup when a previously-run race is reloaded into the manager. In this case `pilots` is **empty (`[]`)** and the event is essentially a "results invalidated" signal.
 
 ```json
 {
@@ -561,7 +584,7 @@ Fires after `RaceEnd`, once final results are computed.
 }
 ```
 
-`pilots` is sorted ascending by `position`. DNF pilots appear at the bottom.
+`pilots` is sorted ascending by `position`. DNF pilots appear at the bottom. **`pilots` is `[]` when the event represents a result clear** — receivers that render a result UI should treat an empty list as "clear the display" rather than "0 pilots finished".
 
 ### 7.6 `StageRanking`
 
@@ -577,7 +600,7 @@ Fires when stage ranking changes (after `ResultManager` recomputes results), but
 }
 ```
 
-`ranking` is sorted ascending by `position`.
+`ranking` is sorted ascending by `position`. Like `RaceResult` (§7.5), this event also fires when results are cleared (race reset or startup re-load); in that case `ranking` may be empty or contain entries with zero/null aggregates — treat it as a "stage ranking invalidated" signal.
 
 ### 7.7 `PilotCrashedOut`
 
@@ -615,6 +638,40 @@ Fires when pilots are added to or removed from the current race (e.g., late addi
 ```
 
 `pilots` is the **complete current roster** of the race after the change — not just the added/removed pilot.
+
+### 7.9 `PilotStaggeredStart`
+
+Fires only when a TimeTrial race runs with FPVTrackside's "Time Trial Staggered Start" enabled. `RaceManager.StartStaggered` starts each pilot in turn; this event is emitted **at the exact instant the pilot gets the go signal**, once per pilot.
+
+```json
+{
+  "type": "PilotStaggeredStart",
+  "ts": "...",
+  "seq": 47,
+  "round": 1,
+  "race": 3,
+  "pilot": { "...": "PilotInfoExt (§6.2)" },
+  "orderIndex": 0,
+  "totalPilots": 4,
+  "delaySeconds": 3.0
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `round` / `race` | int | Race identifiers |
+| `pilot` | PilotInfoExt | The pilot getting the go signal. `pilot.channel.colorR/G/B` can be sent straight to LED hardware. |
+| `orderIndex` | int | 0-based start order. `0` is the first pilot to go. |
+| `totalPilots` | int | Number of pilots in the staggered start for this race. |
+| `delaySeconds` | number (seconds) | Inter-pilot start delay. Each pilot's go moment is `RaceStart.actualStart + (orderIndex+1) * delaySeconds`. |
+
+**Start order**: ascending by event-wide best-time rank (`LapRecordManager.GetTimePosition`), then ascending by channel frequency as a tiebreaker. In the first heat (no PB yet), every pilot has the same rank and frequency-order applies.
+
+**Not emitted for other start modes**:
+- Simultaneous start (regular Race) → `RaceStart` alone is sufficient.
+- Delayed start (`MinStartDelay` / `MaxStartDelay`) → `RacePreStart` + `RaceStart` carry everything.
+
+The arrival of this event itself is the staggered-start signal for receivers. No staggered flag is sent in Hello.
 
 ---
 

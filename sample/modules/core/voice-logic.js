@@ -3,11 +3,27 @@ const configStore = require('./config-store.js');
 const voiceTemplates = require('./voice-templates.js');
 
 // Phonetic comes from PilotInfoExt.phonetic (§6.2). Falls back to the display
-// name when phonetic is not provided.
+// name when phonetic is not provided. Logs a one-shot warning per pilot so the
+// operator can tell whether the sender just isn't shipping phonetic or whether
+// the pilot lookup is missing entirely.
+const _phoneticWarned = new Set();
 function pilotSpeak(pilotInfo, fallbackName) {
     if (pilotInfo?.phonetic) return pilotInfo.phonetic;
+    const key = pilotInfo?.name || fallbackName;
+    if (key && !_phoneticWarned.has(key)) {
+        _phoneticWarned.add(key);
+        if (!pilotInfo) {
+            logger.warn(`[Voice] no PilotInfoExt for "${key}" — using display name. (Receiver started mid-race? Wait for next RaceLoaded/PilotRaceState.)`);
+        } else {
+            logger.warn(`[Voice] pilot "${key}" has no phonetic field — using display name. Set "Phonetic" in FPVTrackside pilot config.`);
+        }
+    }
     if (pilotInfo?.name) return pilotInfo.name;
     return fallbackName || '';
+}
+
+function _resetPhoneticWarnings() {
+    _phoneticWarned.clear();
 }
 
 function fmtSec(value) {
@@ -28,9 +44,18 @@ function resetForRace() {
 
 function loadPilots(pilots) {
     pilotsByName = new Map();
+    let withPhonetic = 0;
     for (const p of pilots || []) {
-        if (p?.name) pilotsByName.set(p.name, p);
+        if (p?.name) {
+            pilotsByName.set(p.name, p);
+            if (p.phonetic) withPhonetic++;
+        }
     }
+    const total = pilotsByName.size;
+    if (total > 0) {
+        logger.info(`[Voice] pilots loaded: ${total} (with phonetic: ${withPhonetic})`);
+    }
+    _resetPhoneticWarnings();
 }
 
 function setRaceActive(active) {
@@ -79,10 +104,24 @@ function onCrash(evt, announce) {
     announce(text);
 }
 
+// Fires for each PilotStaggeredStart event (§7.9). Independent of the holeshot
+// `start` template — uses `staggeredStart` so the operator can phrase the two
+// differently in voice.json. Goes straight through `announce()`; no race state
+// check (raceActive may not be true yet when the first pilot gets the signal).
+function onStaggeredStart(evt, announce) {
+    const speak = pilotSpeak(evt.pilot, evt.pilot?.name);
+    if (!speak) return;
+    const text = voiceTemplates.render('staggeredStart', { pilot: speak });
+    if (!text) return;
+    logger.info(`[Voice] ${text}`);
+    announce(text);
+}
+
 module.exports = {
     resetForRace,
     loadPilots,
     setRaceActive,
     onDetection,
     onCrash,
+    onStaggeredStart,
 };

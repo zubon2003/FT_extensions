@@ -80,6 +80,8 @@ Extension が**やってはいけない**こと:
 2. FPVTrackside のファイルシステムパスを伝達し、後続イベント中の相対パス（`photoPath` 等）を解決可能にする
 3. **Extension が FPVTrackside より先に起動**してもよい設計（Extension は最初の Hello が来るまで待機）
 
+Hello は受信側を「ただのログ吸い込み口」から **FPVTrackside と対等な peer（協調ノード）** に格上げする役割を持ちます。最初の非 Hello イベントが届く時点で Extension は、パイロットメディアの所在（`paths.pilotsDirectory`、`paths.workingDirectory`）、FPVTrackside の表示精度（`decimalPlaces`）、1 ラップのセクター数とどのゲートがラップループか（`timingSystem.splitsPerLap`、各システムの `index`/`role`/`type`）、ホールショット判定や重複ラップ排除に FPVTrackside が使っている閾値（`eventSettings`）をすべて把握済みです。汎用 LED/TTS/スコアボード受信機は、Hello を受けた時点でセクター描画の自動構成、操作者画面と末桁まで一致するラップタイム表示、FPVTrackside と同等のフィルタ判断を行えます — 旧 `RemoteNotifier` の生検出ストリーム単独では達成できなかった機能群です。
+
 ### 3.2 FPVTrackside 側の動作
 
 - `ExtensionNotifier` 起動と同時に Hello PUT を即時送信（`t = 0`）
@@ -122,16 +124,22 @@ Extension が**やってはいけない**こと:
     "splitsPerLap": 4,
     "allDummy": false,
     "systems": [
-      { "index": 0, "type": "LapRFTimingSystem", "role": "Split" },
+      { "index": 0, "type": "LapRFTimingSystem", "role": "Prime" },
       { "index": 1, "type": "LapRFTimingSystem", "role": "Split" },
       { "index": 2, "type": "LapRFTimingSystem", "role": "Split" },
-      { "index": 3, "type": "LapRFTimingSystem", "role": "Prime" }
+      { "index": 3, "type": "LapRFTimingSystem", "role": "Split" }
     ]
   },
   "eventSettings": {
     "raceStartIgnoreDetections": 0.5,
     "minLapTime": 5.0,
     "primaryTimingSystemLocation": "EndOfLap"
+  },
+  "channelSettings": {
+    "channels": [
+      { "band": "Raceband", "number": 1, "frequency": 5658, "colorR": 255, "colorG": 0, "colorB": 0 },
+      { "band": "Raceband", "number": 2, "frequency": 5695, "colorR": 0, "colorG": 255, "colorB": 0 }
+    ]
   }
 }
 ```
@@ -155,10 +163,11 @@ Extension が**やってはいけない**こと:
 | `TimingSystem.SplitCount` | int | 「Split」システム数（中間セクター検出） |
 | `TimingSystem.SplitsPerLap` | int | **ラップあたりのセクター数。** `SplitCount + 1` に等しい。「+1」は Prime での lap-end 検出（これ自体がラップ最終セクター）の分 |
 | `TimingSystem.AllDummy` | bool | 設定済みシステムがすべてダミー/シミュレータの場合 true。設定タイプから判定し、接続状態には依存しない |
-| `TimingSystem.Systems[]` | array | システム別リスト（セクター通過順 — Split を順に列挙、最後に Prime）。各要素: `index`（0 始まり、`DetectionExt.TimingSystemIndex` と一致）、`type`（C# クラス名、例: `"LapRFTimingSystem"`, `"DummyTimingSystem"`）、`Role`（`"Split"` / `"Prime"`） |
+| `TimingSystem.Systems[]` | array | システム別リスト。**インデックス番号は `DetectionExt.TimingSystemIndex` と完全に一致**: index `0` が Prime（ラップループ）、index `1..splitCount` が Split（中間セクター）でセクター通過順に並ぶ。配列は `index` 昇順。各要素: `index`（0 始まり）、`type`（C# クラス名、例: `"LapRFTimingSystem"`, `"DummyTimingSystem"`）、`Role`（`"Split"` / `"Prime"`）。受信側は `systems[detection.timingSystemIndex]` で直接ゲートのロールを参照できる |
 | `EventSettings.RaceStartIgnoreDetections` | number（秒） | Event 設定「Race Start Ignore Detections」。`RaceStart.ActualStart` から本秒数以内の検出は FPVTrackside 側で破棄される。Extension はレース序盤の「整定中」表示に利用可能 |
 | `EventSettings.MinLapTime` | number（秒） | Event 設定「Smart Minimum Lap Time」。本値より速いラップタイムは重複検出として FPVTrackside 側で破棄される |
 | `EventSettings.PrimaryTimingSystemLocation` | string | Event 設定「Primary Timing System Location」。`"Holeshot"` または `"EndOfLap"` のいずれか。`Holeshot` = ラップループがスタート位置にあるため、最初の lap-end 通過はホールショット（lap 0 → lap 1 への遷移であって実ラップではない）。`EndOfLap` = ラップループがスタート位置の先にあるため、最初の lap-end 通過がそのまま lap 1 終了（ホールショットは存在しない）。Extension はこの値でホールショット検出を表示／抑制するかを判断する |
+| `ChannelSettings.Channels[]` | ChannelInfo[] | イベントで定義されたチャンネル一覧（"Channel Settings"）。各要素は §6.1 の `ChannelInfo`。`colorR/G/B` はイベント設定で割り当てられた表示色。受信側はパイロット未割当時のチャンネル表示やレース外のチャンネル一覧表示に利用可能 |
 
 `TimingSystem` ブロックは FPVTrackside が Hello 送信時点で認識している**設定済みトポロジ**です。接続状態は意図的に含めていません — FPVTrackside 起動直後はほとんどのシステムが接続交渉中で、この時点での connected/disconnected フラグは誤解を招くためです。Extension は `count`, `SplitsPerLap`, 各 `index`/`Role`/`type` をルーティングに利用できます。
 
@@ -268,7 +277,7 @@ absolutePath = path.join(config.Fpvt.Paths.WorkingDirectory, pilot.PhotoPath)
 
 | フィールド | 型 | 説明 |
 |---|---|---|
-| `band` | string | `R` / `F` / `A` / `B` / `E` / `D` / `L`（enum 名そのまま） |
+| `band` | string | C# `Band` enum の値名（生）。次のいずれか: `Fatshark`, `Raceband`, `A`, `B`, `E`, `DJIFPVHD`, `SharkByte`（`HDZero` の別名、enum 値同一）, `LowBand`, `Diatone`, `DJIO3`, `DJIO4`, `WalkSnail`、未割当チャンネルは `None`。FPVTrackside のバージョンアップで新しいバンドが追加される可能性があるため、**受信側は値を不透明な文字列として扱い、上記リストが閉じていると仮定してはならない**。 |
 | `number` | int | 通常 1〜8 |
 | `frequency` | int | MHz |
 | `ColorR/G/B` | int (0〜255) | このレースで本チャンネルに割り当てられた表示色 |
@@ -411,6 +420,8 @@ absolutePath = path.join(config.Fpvt.Paths.WorkingDirectory, pilot.PhotoPath)
 
 カレントレースが切り替わったとき発火（マネージャに新レースがロードされたとき）. `RacePreStart` より前に到着.
 
+**`RaceManager.ResetRace` 直後にも再発火する** — リセット対象レースを引数として、同じレースを再選択した場合でも `RaceLoaded` を再送する。結果クリアに伴い受信側のパイロット辞書や派生状態が古くなり得るため、`RaceResult.pilots=[]` の「結果無効化」シグナルと対になり、フル状態を再供給する役割を持つ。受信側は冪等な状態置き換えとして扱うこと（同じ `round`/`race` の連続受信を異常と見なさない）。
+
 ```json
 {
   "type": "RaceLoaded",
@@ -486,17 +497,26 @@ absolutePath = path.join(config.Fpvt.Paths.WorkingDirectory, pilot.PhotoPath)
 | `failure` | bool | `RaceCancelled` のみ存在. システム異常による中止なら true、操作者による中止なら false |
 
 5 つの `type` 値:
-- `RacePreStart` — レースアーム完了、カウントダウン開始直前. **`ScheduledStart` を含む**
+- `RacePreStart` — レースアーム完了、**ランダム化されたスタート時刻が確定した直後**、カウントダウン開始直前. **`ScheduledStart` を含む**。`RaceManager.OnRaceStartScheduled`（`OnRacePreStart` ではない）から発火されるため、タイムスタンプは**ランダム化後の真の予定時刻**であり最遅推定値ではない
 - `RaceStart` — カウントダウン終了、レースタイマー開始. **`actualStart` を含む**
 - `RaceTimesUp` — レース時間経過（必ずしもレース終了ではない. 進行中ラップは継続）
 - `RaceEnd` — レース終了（全パイロット終了または停止）
 - `RaceCancelled` — レース中止
 
+`RacePreStart.scheduledStart` は `StartRaceInLessThan(MinStartDelay, MaxStartDelay)` が選んだ**正確な予定スタート瞬間** — `[Now + MinStartDelay, Now + MaxStartDelay]` の一様分布乱数で決定されます。本値は wait ループ実行前に配信されるため、受信側はランダム窓全体（およそ `MaxStartDelay − MinStartDelay` から通信遅延数 ms を引いた時間）をスタート合図準備に使えます。これは特に**アクセシビリティ**用途で価値があります: 聴覚障害者・難聴者、あるいは環境騒音で「Go」のビープ音がマスクされる場面でも、`scheduledStart` に固定された LED パネル／ストロボに頼ることで、他のパイロットと同条件で同じスタート合図を受け取れます — イベントがランダムスタート遅延（`MinStartDelay != MaxStartDelay`）を使う場合でも有効です。`scheduledStart`（`RacePreStart`）と `actualStart`（`RaceStart`）を突き合わせれば、運営側はスタートタイミングのジッタを事後監査することも可能です.
+
 ### 7.4 `DetectionExt`
 
 最も高頻度なイベント. ゲート検出（セクター通過またはラップ終端）毎に 1 回発火. Extension 用途では既存の `DetectionDetails` を置き換え. レガシー Notifier も有効な場合、両方が wire 上に流れる.
 
-**重複排除**: 送信側は detection ID でフィルタするため、同じ検出について本イベントが重複送信されることはない（FPVTrackside 内部で `OnSplitDetection` と `OnLapDetected` の両方が同一検出に対し発火するケースがあっても）.
+レガシー `DetectionDetails` と比較すると、`DetectionExt` は受信側で従来導出する必要があった情報を**事前計算済みで配信**します:
+
+- **`sectorTime`** — 本検出で終了したセクターの所要時間。レガシーは累積 `Time` のみで、受信側は各パイロットの前回検出を記憶し差分計算する必要があった（途中でイベント欠落があれば破綻）
+- **`positionSnapshot[]`** — その瞬間の全パイロット順位（検出対象だけでなく全員）を `Race.GetTrackPosition` 済みの順序で同梱。レガシーは検出パイロット自身の `Position` のみ
+- **`raceFinishedForPilot`**, **`valid`**, **`lapTimeSoFar`**, **`raceSector`** — 完走フラグ・フィルタ有効フラグ・進行中ラップタイム・累積順位キー
+- **`round` / `race` / `raceType`** — 各検出がレース識別子を持つため、直近の `RaceState` と相関を取る必要がなくなる
+
+**重複排除**: 送信側は detection ID でフィルタするため、同じ検出について本イベントが重複送信されることはない（FPVTrackside 内部で `OnSplitDetection` と `OnLapDetected` の両方が同一検出に対し発火するケースがあっても）。レガシー `RemoteNotifier` には重複排除が**無く**、ラップループ通過のたびに同じ検出が 2 回配信されていました — 受信側でのフィルタリングが必須でした.
 
 ```json
 {
@@ -532,7 +552,7 @@ absolutePath = path.join(config.Fpvt.Paths.WorkingDirectory, pilot.PhotoPath)
 | `timingSystemIndex` | int | 検出元タイミングシステムの index（0 始まり）. 物理ゲートに対応 |
 | `isLapEnd` | bool | ラップループ通過なら true、中間セクターなら false |
 | `lapNumber` | int | 進行中（`IsLapEnd=true` なら完了直後）のラップ番号（0 始まり） |
-| `SectorIndex` | int | ラップ内セクター index（1 始まり）. `IsLapEnd=true` ではラップ最終セクター |
+| `SectorIndex` | int | ラップ内セクター index（1 始まり）。実装は `(timingSystemIndex % splitsPerLap) + 1`（内部セクター未設定時は `Max(1, timingSystemIndex + 1)`）。Prime/ラップループは `timingSystemIndex=0` なので**ここでの値は `1`** になる。すなわち、ラップエンド通過は「直前ラップの最終セクター」ではなく「次ラップの S1」として番号付けされる。"end-of-lap" セクターのラベルが必要な受信側は本フィールドではなく `splitsPerLap` と `isLapEnd` から導出すること |
 | `raceSector` | int | レース開始からの累積セクター index. エンコーディングは `lap × 100 + timingSystemIndex`. `100` は固定の乗数（`splitsPerLap` ではない）であり、インデックス部分は 0 始まりの生 `timingSystemIndex`（Goal = 0）で、上の 1 始まり `sectorIndex` フィールドとは別物. 順序を曖昧なくするためには `splitsPerLap ≤ 100` を前提とする. 順位算定の内部値 — `PositionEntry.RaceSector` と同じ |
 | `raceTime` | number（秒） | `RaceStart.ActualStart` からの本検出までの秒数 |
 | `sectorTime` | number（秒） \| null | 本検出で終了したセクターの所要時間. 当該パイロットの本ラップ内に先行検出が無ければ null（例: ホールショット） |
@@ -548,7 +568,10 @@ absolutePath = path.join(config.Fpvt.Paths.WorkingDirectory, pilot.PhotoPath)
 
 ### 7.5 `RaceResult`
 
-`RaceEnd` の後、最終結果計算後に発火.
+`ResultManager` がレースの結果状態変化を通知した時に発火。発火コンテキストは 2 種類:
+
+1. **レース終了時の結果確定** — **`RaceEnd` の直前**に送信される（後ではない）。典型的な終了シーケンスは `RaceResult` → `StageRanking`（ステージ所属時のみ） → `RaceEnd`。受信側は `RaceResult` 受信時点でレース終了処理を進めてよく、`RaceEnd` を待つ必要はない
+2. **結果クリア** — レースの保存結果がクリアされた時に発火。`RaceManager.ResetRace`（操作者によるリセット）に加え、FPVTrackside 起動時に過去走行済みレースを再ロードした際にも自動的に発火する。このときの `pilots` は **空配列（`[]`）** になり、本イベントは事実上「結果無効化」シグナルとして機能する
 
 ```json
 {
@@ -562,7 +585,7 @@ absolutePath = path.join(config.Fpvt.Paths.WorkingDirectory, pilot.PhotoPath)
 }
 ```
 
-`pilots` は `Position` 昇順. DNF は末尾.
+`pilots` は `Position` 昇順、DNF は末尾。**結果クリア時は `pilots` が `[]` になる** — 結果 UI を描画する受信側は、空リストを「0 名が完走した」ではなく「表示をクリアせよ」と解釈すること。
 
 ### 7.6 `StageRanking`
 
@@ -578,7 +601,7 @@ absolutePath = path.join(config.Fpvt.Paths.WorkingDirectory, pilot.PhotoPath)
 }
 ```
 
-`Ranking` は `Position` 昇順.
+`Ranking` は `Position` 昇順。`RaceResult`（§7.5）と同様、結果クリア（レースリセット・起動時の再ロード）時にも発火する。その場合 `ranking` は空配列または集計値がゼロ／null のエントリを含むため、「ステージ順位無効化」シグナルとして扱うこと。
 
 ### 7.7 `PilotCrashedOut`
 
@@ -616,6 +639,40 @@ absolutePath = path.join(config.Fpvt.Paths.WorkingDirectory, pilot.PhotoPath)
 ```
 
 `pilots` は変更**後の現在の全名簿**（追加/削除されたパイロットのみではない）.
+
+### 7.9 `PilotStaggeredStart`
+
+タイムトライアル系レースで FPVTrackside の "Time Trial Staggered Start" 設定が有効な時のみ発火。`RaceManager.StartStaggered` が各パイロットを順次スタートさせる際、**そのパイロットの go 合図が出る瞬間**に 1 件ずつ送信。
+
+```json
+{
+  "type": "PilotStaggeredStart",
+  "ts": "...",
+  "seq": 47,
+  "round": 1,
+  "race": 3,
+  "pilot": { "...": "PilotInfoExt (§6.2)" },
+  "orderIndex": 0,
+  "totalPilots": 4,
+  "delaySeconds": 3.0
+}
+```
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `round` / `race` | int | 対象レースの識別子 |
+| `pilot` | PilotInfoExt | スタートするパイロット。`channel.colorR/G/B` をそのまま LED 等の物理出力に流せる |
+| `orderIndex` | int | スタート順の 0 始まりインデックス。`0` が最初に go するパイロット |
+| `totalPilots` | int | 本レースで staggered スタートする総人数 |
+| `delaySeconds` | number（秒） | パイロット間のスタート間隔。`RaceStart.actualStart + (orderIndex+1) * delaySeconds` がそのパイロットの go タイミング |
+
+**スタート順序**: イベント内ベストタイム順位（`LapRecordManager.GetTimePosition`）昇順 → 同順位は周波数昇順。初回ヒート等で PB が無いパイロットは全員同順位扱いとなり、周波数順にスタートする。
+
+**他のスタートモードでは発火しない**:
+- 同時スタート（通常 Race）→ `RaceStart` 1 件で完結
+- 遅延スタート（`MinStartDelay`/`MaxStartDelay`）→ `RacePreStart` + `RaceStart` で完結
+
+受信側は本イベントの**到着自体**を staggered start のシグナルとして扱える。Hello に staggered フラグは含まれない。
 
 ---
 

@@ -7,7 +7,7 @@ const FPVT_PATH = path.resolve(process.cwd(), 'fpvt.json');
 
 // Top-level keys that belong to the user-editable config (config.json).
 // Anything else in /api/config POST that's not 'fpvt' is also written here.
-const USER_KEYS = ['extension', 'camera_switcher', 'voicevox', 'leaderboard'];
+const USER_KEYS = ['extension', 'camera_switcher', 'voicevox', 'google_tts', 'tts', 'leaderboard'];
 
 function readJson(filePath) {
     try {
@@ -64,6 +64,7 @@ function applyHello(evt) {
         decimalPlaces: evt.decimalPlaces,
         timingSystem: evt.timingSystem,
         eventSettings: evt.eventSettings,
+        channelSettings: evt.channelSettings,
     };
     writeAtomic(FPVT_PATH, current.fpvt);
     return current;

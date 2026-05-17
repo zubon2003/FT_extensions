@@ -20,6 +20,7 @@ const { SerialPort } = require('serialport');
 const logger = require('./modules/core/logger.js');
 const configStore = require('./modules/core/config-store.js');
 const VoiceVoxHandler = require('./modules/core/voicevox-handler.js');
+const GoogleTtsHandler = require('./modules/core/google-tts-handler.js');
 const voiceLogic = require('./modules/core/voice-logic.js');
 const voiceTemplates = require('./modules/core/voice-templates.js');
 const resultsStore = require('./modules/core/results-store.js');
@@ -38,15 +39,86 @@ const KEEPALIVE_TIMEOUT_MS = 360_000;
 const HEADERS_TIMEOUT_MS   = 361_000;
 const SHUTDOWN_FORCE_EXIT_MS = 2000;
 
+// Out-of-box defaults. Used to seed config.json on first run (or after the
+// user deletes it). Module-level DEFAULTS inside each handler still apply at
+// runtime, but persisting these here keeps the on-disk config readable and
+// makes the Web UI show real values instead of empty fields.
+const DEFAULT_CONFIG = {
+    extension: {
+        port: DEFAULT_EXTENSION_PORT,
+    },
+    led: {
+        enabled: false,
+        port: '',
+        compensation_ms: 0,
+    },
+    camera_switcher: {
+        switching_mode: 'Auto',
+        atem_ip: '192.168.10.240',
+        default_camera: 4,
+        atem_enabled: false,
+    },
+    tts: {
+        // 'voicevox' or 'google'. Picks which TTS backend handles
+        // race announcements and the Test Voice button.
+        engine: 'google',
+        // Filename in the working directory that supplies the phrase
+        // templates (e.g. voice_jp.json, voice_en.json). Empty string or
+        // missing falls back to voice.json.
+        voiceFile: 'voice_en.json',
+    },
+    voicevox: {
+        url: 'http://localhost:50021',
+        speaker: 3,
+        volume: 2.7,
+        speed: 1.2,
+        audio_delay_ms: 0,
+        enabled: true,
+    },
+    google_tts: {
+        // Operator must paste their own key in the Web UI — never commit one.
+        apiKey: '',
+        languageCode: 'en-US',
+        voiceName: 'en-US-Neural2-A',
+        speakingRate: 1,
+        pitch: 0,
+        volumeGainDb: 0,
+        audioEncoding: 'MP3',
+        audio_delay_ms: 0,
+        enabled: true,
+    },
+};
+
+// Fill missing keys recursively. Returns true if anything was added. Existing
+// user values — including explicit `false`, `0`, `""`, `null` — are left as-is;
+// only keys absent from `target` get pulled from `defaults`.
+function fillMissing(target, defaults) {
+    let changed = false;
+    for (const k of Object.keys(defaults)) {
+        const dv = defaults[k];
+        const isPlainObj = dv !== null && typeof dv === 'object' && !Array.isArray(dv);
+        if (!(k in target)) {
+            target[k] = isPlainObj ? { ...dv } : dv;
+            changed = true;
+        } else if (isPlainObj) {
+            if (target[k] === null || typeof target[k] !== 'object' || Array.isArray(target[k])) {
+                target[k] = { ...dv };
+                changed = true;
+            } else if (fillMissing(target[k], dv)) {
+                changed = true;
+            }
+        }
+    }
+    return changed;
+}
+
 // --- Bootstrap config -------------------------------------------------------
 
 let config = configStore.get();
 
-// Ensure a port exists in the persisted config before we read it below.
-if (!config.extension || typeof config.extension.port !== 'number') {
-    config.extension = config.extension || {};
-    config.extension.port = DEFAULT_EXTENSION_PORT;
+if (fillMissing(config, DEFAULT_CONFIG)) {
     configStore.replace(config);
+    logger.info('[Bootstrap] config.json seeded with defaults for missing keys');
 }
 const PORT = config.extension.port;
 // Default to loopback only. Set extension.bindHost to "0.0.0.0" (or a specific
@@ -89,7 +161,28 @@ cameraSwitcher.onStatusChange((status) => {
     io.emit('camera_update', status);
 });
 
-const vvHandler = new VoiceVoxHandler(config.voicevox || {});
+// Engine selector — only the active backend is instantiated, but we hang both
+// configs off the handler so the Web UI can edit either pane without churn.
+function createTtsHandler(cfg) {
+    const engine = cfg.tts?.engine === 'google' ? 'google' : 'voicevox';
+    if (engine === 'google') {
+        return { engine, handler: new GoogleTtsHandler(cfg.google_tts || {}) };
+    }
+    return { engine, handler: new VoiceVoxHandler(cfg.voicevox || {}) };
+}
+
+let { engine: ttsEngine, handler: ttsHandler } = createTtsHandler(config);
+logger.info(`[Bootstrap] TTS engine = ${ttsEngine}`);
+
+// Honour the persisted voiceFile selection if it points at an existing file;
+// otherwise stay on whatever voice-templates loaded by default (voice.json).
+if (config.tts?.voiceFile && config.tts.voiceFile !== voiceTemplates.currentFileName()) {
+    if (!voiceTemplates.setFile(config.tts.voiceFile)) {
+        // Persist the resolved (fallback) file so the Web UI reflects reality.
+        config.tts.voiceFile = voiceTemplates.currentFileName();
+        configStore.replace(config);
+    }
+}
 
 if (config.camera_switcher && config.camera_switcher.enabled) {
     cameraSwitcher.init();
@@ -117,7 +210,8 @@ for (const m of VENDOR_MOUNTS) {
 // Event router holds per-stream state (seat map, seq, dedup, last detection)
 // and the type→handler dictionary. server.js stays thin: HTTP + bootstrap.
 const router = createRouter({
-    io, ledHandler, cameraSwitcher, vvHandler,
+    io, ledHandler, cameraSwitcher,
+    ttsHandler: () => ttsHandler,
     voiceLogic, voiceTemplates, resultsStore,
     configStore, logger,
 });
@@ -206,12 +300,46 @@ app.post('/api/config', (req, res) => {
             if (camEvt) cameraSwitcher.triggerEvent(camEvt);
         }
 
-        // Live-update VOICEVOX settings
-        if (config.voicevox) {
-            vvHandler.speaker = config.voicevox.speaker;
-            vvHandler.volume = config.voicevox.volume;
-            vvHandler.enabled = !!config.voicevox.enabled;
-            vvHandler.playOnServer = !!config.voicevox.play_on_server;
+        // Live-switch the voice template file if the operator picked a
+        // different one. Templates are reloaded; failures fall back to the
+        // previous file so announcements never go silent.
+        if (config.tts?.voiceFile && config.tts.voiceFile !== voiceTemplates.currentFileName()) {
+            if (!voiceTemplates.setFile(config.tts.voiceFile)) {
+                config.tts.voiceFile = voiceTemplates.currentFileName();
+            }
+        }
+
+        // TTS engine swap — if the operator flipped engines, drop the old
+        // handler's queue and instantiate the new one. Otherwise live-update
+        // settings on the existing handler so the next announcement uses them.
+        const desiredEngine = config.tts?.engine === 'google' ? 'google' : 'voicevox';
+        if (desiredEngine !== ttsEngine) {
+            try { ttsHandler.clearQueue(); } catch (_e) { /* best-effort */ }
+            ({ engine: ttsEngine, handler: ttsHandler } = createTtsHandler(config));
+            logger.info(`[Config] TTS engine switched to ${ttsEngine}`);
+        } else if (ttsEngine === 'voicevox' && config.voicevox) {
+            // Skip null/undefined speaker — assigning it would send
+            // `speaker=null` to VOICEVOX (HTTP 422, silent no-audio).
+            if (config.voicevox.speaker != null) {
+                ttsHandler.speaker = config.voicevox.speaker;
+            }
+            ttsHandler.volume = config.voicevox.volume;
+            ttsHandler.enabled = !!config.voicevox.enabled;
+            if (typeof config.voicevox.url === 'string' && config.voicevox.url) {
+                ttsHandler.url = config.voicevox.url;
+            }
+            if (typeof config.voicevox.speed === 'number') {
+                ttsHandler.speed = config.voicevox.speed;
+            }
+        } else if (ttsEngine === 'google' && config.google_tts) {
+            const g = config.google_tts;
+            ttsHandler.enabled = !!g.enabled;
+            if (typeof g.apiKey === 'string') ttsHandler.apiKey = g.apiKey;
+            if (typeof g.languageCode === 'string' && g.languageCode) ttsHandler.languageCode = g.languageCode;
+            if (typeof g.voiceName === 'string' && g.voiceName) ttsHandler.voiceName = g.voiceName;
+            if (typeof g.speakingRate === 'number') ttsHandler.speakingRate = g.speakingRate;
+            if (typeof g.pitch === 'number') ttsHandler.pitch = g.pitch;
+            if (typeof g.volumeGainDb === 'number') ttsHandler.volumeGainDb = g.volumeGainDb;
         }
         res.json({ success: true });
     } catch (e) {
@@ -224,6 +352,96 @@ app.get('/api/status', (_req, res) => {
         camera: cameraSwitcher.getStatus(),
         fpvt: configStore.get().fpvt || null,
     });
+});
+
+// Server-side proxy for VOICEVOX /speakers. The browser can't fetch
+// http://localhost:50021/speakers directly because VOICEVOX doesn't send CORS
+// headers by default. `?url=` lets the Web UI preview a not-yet-saved URL.
+app.get('/api/voicevox/speakers', async (req, res) => {
+    const fallbackUrl = (ttsEngine === 'voicevox' && ttsHandler.url)
+        ? ttsHandler.url
+        : (config.voicevox?.url || 'http://localhost:50021');
+    const target = (typeof req.query.url === 'string' && req.query.url)
+        ? req.query.url
+        : fallbackUrl;
+    try {
+        const r = await fetch(`${target.replace(/\/+$/, '')}/speakers`);
+        if (!r.ok) {
+            res.status(r.status).json({ error: `VOICEVOX HTTP ${r.status}` });
+            return;
+        }
+        res.json(await r.json());
+    } catch (e) {
+        res.status(502).json({ error: e.message });
+    }
+});
+
+// Lists voice*.json files in the working directory and reports which one is
+// currently active. The Web UI uses this to populate the file-picker so the
+// operator can swap phrasing (language, tone, …) without restarting.
+app.get('/api/voice_files', (_req, res) => {
+    res.json({
+        files: voiceTemplates.listAvailable(),
+        current: voiceTemplates.currentFileName(),
+    });
+});
+
+// Aggregates the unique language codes exposed by Google's voice catalogue.
+// Same auth surface as /api/google_tts/voices (server-held key, optional
+// `?apiKey=` preview) so the Web UI can pick a language before saving.
+app.get('/api/google_tts/languages', async (req, res) => {
+    const apiKey = (typeof req.query.apiKey === 'string' && req.query.apiKey)
+        ? req.query.apiKey
+        : (ttsEngine === 'google' ? ttsHandler.apiKey : config.google_tts?.apiKey);
+    if (!apiKey) {
+        res.status(400).json({ error: 'Google TTS apiKey is not configured' });
+        return;
+    }
+    try {
+        const r = await fetch(`https://texttospeech.googleapis.com/v1/voices?key=${encodeURIComponent(apiKey)}`);
+        if (!r.ok) {
+            const errText = await r.text().catch(() => '');
+            res.status(r.status).json({ error: `Google TTS HTTP ${r.status}: ${errText.slice(0, 300)}` });
+            return;
+        }
+        const data = await r.json();
+        const set = new Set();
+        for (const v of (data.voices || [])) {
+            for (const lc of (v.languageCodes || [])) set.add(lc);
+        }
+        res.json([...set].sort());
+    } catch (e) {
+        res.status(502).json({ error: e.message });
+    }
+});
+
+// Server-side proxy for Google Cloud TTS /v1/voices. Keeps the API key on the
+// server (the browser only sees the resulting voice list). `?apiKey=` lets the
+// Web UI preview a not-yet-saved key; `?lang=` filters by language code.
+app.get('/api/google_tts/voices', async (req, res) => {
+    const apiKey = (typeof req.query.apiKey === 'string' && req.query.apiKey)
+        ? req.query.apiKey
+        : (ttsEngine === 'google' ? ttsHandler.apiKey : config.google_tts?.apiKey);
+    if (!apiKey) {
+        res.status(400).json({ error: 'Google TTS apiKey is not configured' });
+        return;
+    }
+    const params = new URLSearchParams({ key: apiKey });
+    if (typeof req.query.lang === 'string' && req.query.lang) {
+        params.set('languageCode', req.query.lang);
+    }
+    try {
+        const r = await fetch(`https://texttospeech.googleapis.com/v1/voices?${params.toString()}`);
+        if (!r.ok) {
+            const errText = await r.text().catch(() => '');
+            res.status(r.status).json({ error: `Google TTS HTTP ${r.status}: ${errText.slice(0, 300)}` });
+            return;
+        }
+        const data = await r.json();
+        res.json(data.voices || []);
+    } catch (e) {
+        res.status(502).json({ error: e.message });
+    }
 });
 
 app.post('/api/camera/switch', express.json(), (req, res) => {
@@ -257,11 +475,18 @@ app.get('/api/nextheat', (_req, res) => {
 });
 
 app.get('/api/test_voice', async (req, res) => {
-    const text = (req.query.text || '接続テストです。この声で読み上げを行います。').toString();
-    if (!vvHandler.enabled) return res.status(400).json({ error: 'VOICEVOX disabled' });
+    // English default for Google TTS / sample_en; VOICEVOX falls back to it too.
+    const defaultText = ttsEngine === 'google'
+        ? 'This is a connection test. Race announcements will sound like this.'
+        : '接続テストです。この声で読み上げを行います。';
+    const text = (req.query.text || defaultText).toString();
     try {
-        router.announce(text);
-        res.json({ success: true, text });
+        // Always play through the server-side OS player (PowerShell / afplay /
+        // ffplay), independent of `enabled`. The browser-side socket path is
+        // not used here — Test Voice is for the operator at the receiver
+        // machine.
+        await ttsHandler.speakOnServer(text);
+        res.json({ success: true, text, engine: ttsEngine });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -354,7 +579,7 @@ server.headersTimeout = HEADERS_TIMEOUT_MS;
 
 server.listen(PORT, HOST, () => {
     console.log('────────────────────────────────────────────────────────────');
-    console.log(' tvpas-integrated v2 — FPVTrackside Extension receiver');
+    console.log(' FPVTrackside Extension Sample — receiver');
     console.log(`  PUT      : http://127.0.0.1:${PORT}/  (NotificationURL)`);
     console.log(`  Web UI   : http://127.0.0.1:${PORT}/`);
     console.log(`  Overlay  : http://127.0.0.1:${PORT}/html/overlay`);
@@ -376,7 +601,7 @@ function shutdown(sig) {
     try { ledHandler.shutdown(); } catch (e) { logger.warn(`[LED] shutdown error: ${e.message}`); }
     Promise.resolve(cameraSwitcher.shutdown())
         .catch(e => logger.warn(`[Camera] shutdown error: ${e.message}`));
-    try { vvHandler.clearQueue(); } catch (_e) { /* best-effort */ }
+    try { ttsHandler.clearQueue(); } catch (_e) { /* best-effort */ }
 
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), SHUTDOWN_FORCE_EXIT_MS).unref();

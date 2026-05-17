@@ -9,3 +9,7 @@ sample/log/
 # Node
 node_modules/
 npm-debug.log
+
+# Python bytecode cache
+__pycache__/
+*.pyc

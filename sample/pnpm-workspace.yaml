@@ -1,0 +1,20 @@
+# pnpm 11 settings. Used here even though sample/ is a single project
+# (not a workspace) — in pnpm 11, non-auth settings moved out of .npmrc and
+# the package.json "pnpm" field into this file.
+
+# Supply-chain hardening: refuse package versions published less than 3 days
+# ago. Closes the window where a hijacked maintainer release is still live
+# before takedown. Unit: minutes. 4320 = 3 * 24 * 60.
+minimumReleaseAge: 4320
+minimumReleaseAgeExclude: []
+
+# Explicit allow-list for dependency lifecycle scripts. pnpm 11 errors out on
+# any ignored build script unless it is approved here. Add a package only
+# after confirming what its install script does.
+#   @serialport/bindings-cpp — native binding for serialport. Runs
+#     node-gyp-build, which uses a prebuilt binary when available.
+#   @julusian/freetype2 — transitive of atem-connection, used only for
+#     ATEM Super Source text rendering. Not used by this app; stays blocked.
+allowBuilds:
+  '@serialport/bindings-cpp': true
+  '@julusian/freetype2': false

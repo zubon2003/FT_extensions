@@ -1,5 +1,5 @@
 {
-  "name": "tvpas-integrated-v2",
+  "name": "fpvtrackside-extension-sample",
   "version": "2.0.0",
   "description": "FPVTrackside Extension receiver (INTERFACE.en.md v1.1) with VOICEVOX TTS, ATEM camera switching, and OBS overlays",
   "main": "server.js",
@@ -11,6 +11,7 @@
   "engines": {
     "node": ">=18"
   },
+  "packageManager": "pnpm@11.1.2",
   "dependencies": {
     "@fontsource/audiowide": "^5.0.0",
     "@fontsource/noto-sans-jp": "^5.0.0",

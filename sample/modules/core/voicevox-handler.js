@@ -1,26 +1,24 @@
+'use strict';
+
 const logger = require('./logger.js');
-const { spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const { AudioPlayer } = require('./audio-player.js');
 
 class VoiceVoxHandler {
     constructor(config) {
         this.enabled = config.enabled || false;
         this.url = config.url || 'http://localhost:50021';
-        this.speaker = config.speaker !== undefined ? config.speaker : 1;
+        // Loose `!= null` catches both undefined AND explicit null in
+        // config.json — an explicit null would otherwise be sent as
+        // `speaker=null`, which VOICEVOX rejects with HTTP 422 (no audio).
+        this.speaker = config.speaker != null ? config.speaker : 3;
         this.speed = config.speed || 1.2;
         this.volume = config.volume || 1.0;
-        this.playOnServer = config.play_on_server || false;
 
-        this.playQueue = [];
-        this.isPlaying = false;
-        this.psProcess = null;
+        this.player = new AudioPlayer({ tag: 'VoiceVox', tmpPrefix: 'vv_temp_', ext: '.wav' });
 
         // Tail of a per-call promise chain so synth completions are delivered
         // to the browser (and to the server-side playback queue) in the order
         // enqueueText was called, regardless of how long each /synthesis takes.
-        // The chain is fire-and-forget; rejections are swallowed in the catch.
         this._emitTail = Promise.resolve();
         // Bumped by clearQueue(); any pending synth whose captured generation
         // is older is dropped before the browser / server emit runs.
@@ -29,47 +27,22 @@ class VoiceVoxHandler {
         if (this.enabled) {
             logger.info(`[VoiceVox] init speaker=${this.speaker} volume=${this.volume} speed=${this.speed}`);
             this.checkStatus();
-            if (this.playOnServer) this.initPersistentPlayer();
+            this.player.init();
         }
     }
 
-    initPersistentPlayer() {
-        // PowerShell script for sequential background playback
-        const script = `
-            Add-Type -AssemblyName PresentationCore
-            $player = New-Object System.Windows.Media.MediaPlayer
-            while($true) {
-                $path = [Console]::ReadLine()
-                if (!$path -or $path -eq "exit") { break }
-                try {
-                    $player.Open($path)
-                    $player.Play()
-                    # Wait for duration to be loaded
-                    while($player.NaturalDuration.HasTimeSpan -eq $false) { [System.Threading.Thread]::Sleep(10) }
-                    # Wait for playback to finish
-                    [System.Threading.Thread]::Sleep($player.NaturalDuration.TimeSpan.TotalMilliseconds)
-                    $player.Close()
-                    # Clean up temp file if needed
-                    if ($path -match "vv_temp_") { Remove-Item $path -ErrorAction SilentlyContinue }
-                } catch {}
-                Write-Host "DONE"
-            }
-        `;
-        
-        this.psProcess = spawn('powershell', ['-NoProfile', '-Command', script]);
-        
-        this.psProcess.stdout.on('data', (data) => {
-            if (data.toString().trim().includes("DONE")) {
-                this.isPlaying = false;
-                this.processNextInQueue();
-            }
-        });
+    ensurePlayer() {
+        return this.player.ensureReady();
+    }
 
-        this.psProcess.on('error', (err) => {
-            logger.error(`[VoiceVox] Player error: ${err.message}`);
-        });
-
-        logger.info("[VoiceVox] persistent player ready (PowerShell)");
+    async speakOnServer(text) {
+        if (!text) return;
+        if (!this.ensurePlayer()) {
+            throw new Error('no audio player available');
+        }
+        const base64Data = await this.generateAudioInternal(text);
+        if (!base64Data) return;
+        this.player.enqueue(Buffer.from(base64Data, 'base64'));
     }
 
     async checkStatus() {
@@ -82,12 +55,12 @@ class VoiceVoxHandler {
     enqueueText(text, callback) {
         if (!this.enabled || !text) return;
 
+        // Lazy-init the OS player so flipping enabled=false→true at runtime
+        // wires up server-side playback for the next race-driven announcement.
+        this.ensurePlayer();
+
         logger.debug(`[VoiceVox] synthesis start: "${text}"`);
 
-        // Kick off /synthesis immediately so multiple calls run in parallel —
-        // VOICEVOX is the rate-limit, not us. The deferred work (browser emit
-        // and server playback enqueue) is then serialized through _emitTail so
-        // a slow synth never overtakes a faster one queued after it.
         const gen = this._generation;
         const synthPromise = this.generateAudioInternal(text)
             .catch(e => {
@@ -98,19 +71,14 @@ class VoiceVoxHandler {
         this._emitTail = this._emitTail.then(async () => {
             const base64Data = await synthPromise;
             if (!base64Data) return;
-            // Race ended (or otherwise cleared) while this was synthesising —
-            // drop the stale announcement instead of playing it into the
-            // silence after RaceEnd.
             if (gen !== this._generation) return;
 
             if (callback) {
                 try { callback(base64Data); } catch (e) { logger.error(`[VoiceVox] emit error: ${e.message}`); }
             }
 
-            if (this.playOnServer && this.psProcess) {
-                const buffer = Buffer.from(base64Data, 'base64');
-                this.playQueue.push(buffer);
-                this.processNextInQueue();
+            if (this.player.available()) {
+                this.player.enqueue(Buffer.from(base64Data, 'base64'));
             }
         }).catch(() => { /* keep the chain alive on any unexpected error */ });
     }
@@ -132,32 +100,12 @@ class VoiceVoxHandler {
         return Buffer.from(buffer).toString('base64');
     }
 
-    processNextInQueue() {
-        if (this.isPlaying || this.playQueue.length === 0 || !this.psProcess) return;
-
-        this.isPlaying = true;
-        const buffer = this.playQueue.shift();
-
-        // Write buffer to a temp file for MediaPlayer to read
-        const tempPath = path.join(os.tmpdir(), `vv_temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.wav`);
-        try {
-            fs.writeFileSync(tempPath, buffer);
-            // Send path to PowerShell player
-            this.psProcess.stdin.write(path.normalize(tempPath) + "\n");
-        } catch (e) {
-            logger.error(`[VoiceVox] Playback error: ${e.message}`);
-            this.isPlaying = false;
-        }
-    }
-
     clearQueue() {
-        this._generation++;             // drops any synth in-flight when this returns
-        const count = this.playQueue.length;
-        this.playQueue = [];
+        this._generation++;
+        const count = this.player.clear();
         if (count) logger.info(`[VoiceVox] queue cleared (${count})`);
     }
 
-    // Legacy support
     async generateAudio(text) {
         return this.generateAudioInternal(text).catch(() => null);
     }

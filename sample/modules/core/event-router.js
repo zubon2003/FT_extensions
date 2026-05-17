@@ -16,10 +16,13 @@ const SEEN_DETECTION_MAX = 10_000;
 
 function createRouter(services) {
     const {
-        io, ledHandler, cameraSwitcher, vvHandler,
+        io, ledHandler, cameraSwitcher, ttsHandler: ttsHandlerRef,
         voiceLogic, voiceTemplates, resultsStore,
         configStore, logger,
     } = services;
+    // server.js may pass either the handler itself or a getter function so the
+    // active TTS engine can be hot-swapped via /api/config. Normalise both.
+    const getTts = typeof ttsHandlerRef === 'function' ? ttsHandlerRef : () => ttsHandlerRef;
 
     // --- State (per-event-stream, lives for the process lifetime) ----------
 
@@ -65,8 +68,9 @@ function createRouter(services) {
 
     function announce(text) {
         io.emit('announce_text', { text });
-        if (vvHandler.enabled) {
-            vvHandler.enqueueText(text, (audioData) => {
+        const tts = getTts();
+        if (tts && tts.enabled) {
+            tts.enqueueText(text, (audioData) => {
                 if (audioData) io.emit('play_audio', { data: audioData });
             });
         }
@@ -128,7 +132,12 @@ function createRouter(services) {
         Hello(evt) {
             configStore.applyHello(evt);
             const tsys = evt.timingSystem || {};
+            const chans = evt.channelSettings?.channels || [];
             logger.info(`[Hello] v${evt.fpvtVersion} ${evt.platform} profile=${evt.profile?.name} timers=${tsys.count} sectorsPerLap=${tsys.splitsPerLap}`);
+            const chanSummary = chans.length
+                ? chans.map(c => `${c.band}${c.number}`).join(',')
+                : '(none)';
+            logger.info(`[Hello] channels=${chans.length} [${chanSummary}]`);
         },
 
         RaceLoaded(evt) {
@@ -182,7 +191,7 @@ function createRouter(services) {
             voiceLogic.setRaceActive(false);
             cameraSwitcher.triggerEvent({ type: 'race_end' });
             ledHandler.onRaceEnd();
-            vvHandler.clearQueue();
+            try { getTts().clearQueue(); } catch (_e) { /* best-effort */ }
             resultsStore.onRaceEnd(evt);
             const endKey = evt.type === 'RaceEnd'
                 ? 'raceEnd'
@@ -240,6 +249,26 @@ function createRouter(services) {
         PilotRaceState(evt) {
             updateSeatMap(evt.pilots);
             voiceLogic.loadPilots(evt.pilots);
+        },
+
+        // Per-pilot go signal during TimeTrial staggered start (§7.9).
+        // Light the pilot's lane with their channel color (same routine as a
+        // gate-pass detection) and queue a "<pilot> START" TTS using the
+        // dedicated `staggeredStart` template, kept separate from holeshot.
+        PilotStaggeredStart(evt) {
+            const p = evt.pilot;
+            if (!p) return;
+            logger.info(`[StaggeredStart] ${p.name} (${evt.orderIndex + 1}/${evt.totalPilots}, delay=${evt.delaySeconds}s)`);
+            voiceLogic.onStaggeredStart(evt, announce);
+            // LED fires regardless of pilotSeatByName state — the receiver may
+            // have missed RaceLoaded/PilotRaceState (e.g. started mid-race)
+            // and have an empty seat map, but the wire payload already carries
+            // the pilot's channel color. The hardware lane is selected by the
+            // firmware from the RGB, not seat. Fall back to orderIndex so the
+            // log line still shows a meaningful position.
+            const c = p.channel || {};
+            const seat = pilotSeatByName.get(p.name) ?? evt.orderIndex;
+            ledHandler.onPilotPass(seat, c.colorR || 0, c.colorG || 0, c.colorB || 0);
         },
     };
 

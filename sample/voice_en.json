@@ -1,0 +1,12 @@
+{
+  "lap": "{pilot} lap{lap}、{time}seconds",
+  "lapNoTime": "{pilot}、lap{lap}",
+  "goal": "{pilot}、finished.total{total}seconds",
+  "goalNoTime": "{pilot}、finished!",
+  "start": "",
+  "staggeredStart": "{pilot}、start.",
+  "crash": "{pilot} crashed",
+  "raceEnd": "race finished",
+  "raceCancelled": "race canceled",
+  "raceFailed": "race failed."
+}

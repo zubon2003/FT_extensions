@@ -100,20 +100,31 @@ class LedHandler {
      * Pilot pass: Byte1 = 0x01, Data = RGB
      */
     onPilotPass(seatIndex, r, g, b) {
+        const dropped = !this.enabled || !this.port || !this.port.isOpen;
         this.sendPacket(TYPE_PILOT, r || 0, g || 0, b || 0);
-        logger.debug(`[LED] Pilot Pass RGB(${r},${g},${b})`);
+        if (dropped) {
+            logger.info(`[LED] Pilot Pass seat=${seatIndex} RGB(${r},${g},${b}) — port not open, skipped`);
+        } else {
+            logger.info(`[LED] Pilot Pass seat=${seatIndex} RGB(${r},${g},${b})`);
+        }
     }
 
     /**
      * System event: Byte1 = TYPE_SYSTEM, Byte2 = ASCII Char
      */
     sendSystemEvent(char) {
+        const dropped = !this.enabled || !this.port || !this.port.isOpen;
         this.sendPacket(TYPE_SYSTEM, char.charCodeAt(0), 0, 0);
-        logger.info(`[LED] System Event: '${char}'`);
+        if (dropped) {
+            logger.info(`[LED] System Event: '${char}' — port not open, skipped`);
+        } else {
+            logger.info(`[LED] System Event: '${char}'`);
+        }
     }
 
     onRaceEnd() {
         this.clearCountdown();
+        logger.info(`[LED] Race ended — sending '${RACE_END_CHAR}'`);
         this.sendSystemEvent(RACE_END_CHAR);
     }
 
@@ -132,10 +143,14 @@ class LedHandler {
     }
 
     scheduleCountdown(startTimeMs) {
-        if (!this.enabled || !this.port || !this.port.isOpen) return;
+        if (!this.enabled || !this.port || !this.port.isOpen) {
+            logger.info(`[LED] Countdown not scheduled — port not open`);
+            return;
+        }
         this.clearCountdown();
 
         const now = Date.now();
+        const scheduled = [];
         COUNTDOWN_SCHEDULE.forEach(t => {
             const targetTime = startTimeMs - (t.sec * 1000) - this.compensationMs;
             const delay = targetTime - now;
@@ -145,8 +160,11 @@ class LedHandler {
                     this.sendSystemEvent(t.char);
                 }, delay);
                 this.countdownTimers.push(timer);
+                scheduled.push(`${t.char}@+${(delay/1000).toFixed(2)}s`);
             }
         });
+        const total = ((startTimeMs - now) / 1000).toFixed(2);
+        logger.info(`[LED] Countdown scheduled (start in ${total}s, compensation=${this.compensationMs}ms): ${scheduled.join(', ') || '(none — all thresholds already past)'}`);
     }
 }
 

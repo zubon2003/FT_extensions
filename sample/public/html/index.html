@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>TVPAS Integrated v2 — Control Panel</title>
+    <title>FPVTrackside Extension Sample — Control Panel</title>
     <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
     <link href="/vendor/fontawesome/css/all.min.css" rel="stylesheet">
     <style>
@@ -28,7 +28,7 @@
 <body>
 <nav class="navbar navbar-dark bg-black mb-4">
     <div class="container">
-        <span class="navbar-brand mb-0 h1"><i class="fas fa-microchip me-2"></i>TVPAS Integrated v2</span>
+        <span class="navbar-brand mb-0 h1"><i class="fas fa-microchip me-2"></i>FPVTrackside Extension Sample</span>
         <div class="d-flex gap-2">
             <a href="/html/overlay" target="_blank" class="btn btn-sm btn-outline-info">Overlay</a>
             <a href="/html/nextheat" target="_blank" class="btn btn-sm btn-outline-info">Next</a>
@@ -90,7 +90,31 @@
 
         <!-- Voice tab -->
         <div class="tab-pane fade" id="tab-voice">
-            <div class="card">
+            <div class="card mb-3">
+                <div class="card-header">TTS Engine</div>
+                <div class="card-body">
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <input type="radio" class="btn-check" name="tts_engine" id="tts_voicevox" value="voicevox">
+                            <label class="btn btn-outline-primary w-100" for="tts_voicevox">VOICEVOX</label>
+                        </div>
+                        <div class="col-6">
+                            <input type="radio" class="btn-check" name="tts_engine" id="tts_google" value="google">
+                            <label class="btn btn-outline-primary w-100" for="tts_google">Google Cloud TTS</label>
+                        </div>
+                    </div>
+                    <div class="row g-2 mt-2 align-items-end">
+                        <div class="col-12">
+                            <label class="form-label mb-1">Voice file <button type="button" id="voice_file_refresh" class="btn btn-link btn-sm p-0 ms-1" title="Rescan voice*.json files"><i class="fas fa-sync-alt"></i></button></label>
+                            <select id="voice_file" class="form-select"></select>
+                            <div class="small text-muted mt-1">Lists <code>voice*.json</code> files in the receiver folder. Selected file supplies the phrase templates used by both engines.</div>
+                        </div>
+                    </div>
+                    <div class="small text-muted mt-2">Race announcements + Test Voice route through the selected engine.</div>
+                </div>
+            </div>
+
+            <div class="card mb-3" id="card-voicevox">
                 <div class="card-header">VOICEVOX</div>
                 <div class="card-body">
                     <div class="row mb-3">
@@ -120,16 +144,62 @@
                             <input class="form-check-input" type="checkbox" id="vv_enabled">
                             <label class="form-check-label">Enabled</label>
                         </div>
-                        <div class="col-3 form-check form-switch align-self-end">
-                            <input class="form-check-input" type="checkbox" id="vv_play_server">
-                            <label class="form-check-label">Play on server</label>
-                        </div>
                     </div>
-                    <button id="btn-test-voice" class="btn btn-outline-info">
-                        <i class="fas fa-volume-up me-2"></i>Test Voice
-                    </button>
                 </div>
             </div>
+
+            <div class="card mb-3" id="card-google">
+                <div class="card-header">Google Cloud TTS</div>
+                <div class="card-body">
+                    <div class="row mb-3">
+                        <div class="col-12">
+                            <label class="form-label">API Key</label>
+                            <input type="password" id="g_api_key" class="form-control" placeholder="AIza...">
+                            <div class="small text-muted">Create at console.cloud.google.com → APIs &amp; Services → Credentials. Enable the “Cloud Text-to-Speech API”.</div>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-3">
+                            <label class="form-label">Language <button type="button" id="g_lang_refresh" class="btn btn-link btn-sm p-0 ms-1" title="Reload languages"><i class="fas fa-sync-alt"></i></button></label>
+                            <select id="g_lang" class="form-select"></select>
+                        </div>
+                        <div class="col-5">
+                            <label class="form-label">Voice name <button type="button" id="g_voice_refresh" class="btn btn-link btn-sm p-0 ms-1" title="Reload voices"><i class="fas fa-sync-alt"></i></button></label>
+                            <select id="g_voice" class="form-select"></select>
+                        </div>
+                        <div class="col-2">
+                            <label class="form-label">Encoding</label>
+                            <select id="g_encoding" class="form-select">
+                                <option value="MP3">MP3</option>
+                                <option value="LINEAR16">LINEAR16</option>
+                                <option value="OGG_OPUS">OGG_OPUS</option>
+                            </select>
+                        </div>
+                        <div class="col-2 form-check form-switch align-self-end">
+                            <input class="form-check-input" type="checkbox" id="g_enabled">
+                            <label class="form-check-label">Enabled</label>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-3">
+                            <label class="form-label">Speaking rate</label>
+                            <input type="number" step="0.05" id="g_rate" class="form-control">
+                        </div>
+                        <div class="col-3">
+                            <label class="form-label">Pitch</label>
+                            <input type="number" step="0.5" id="g_pitch" class="form-control">
+                        </div>
+                        <div class="col-3">
+                            <label class="form-label">Volume gain (dB)</label>
+                            <input type="number" step="0.5" id="g_gain" class="form-control">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <button id="btn-test-voice" class="btn btn-outline-info">
+                <i class="fas fa-volume-up me-2"></i>Test Voice
+            </button>
         </div>
 
         <!-- Camera tab -->
@@ -175,7 +245,7 @@
                         <div class="card-header">Quick Settings</div>
                         <div class="card-body">
                             <label class="small mb-1">ATEM IP</label>
-                            <input type="text" id="cam_ip" class="form-control mb-3">
+                            <input type="text" id="cam_ip" class="form-control mb-3" placeholder="192.168.10.240">
                             <label class="small mb-1">Default Camera</label>
                             <input type="number" id="cam_default" class="form-control mb-3">
                             <div class="form-check form-switch">
@@ -237,9 +307,11 @@ async function fetchSpeakers() {
     const url = document.getElementById('vv_url').value || 'http://localhost:50021';
     const select = document.getElementById('vv_speaker');
     const currentVal = select.value;
-    
+
     try {
-        const res = await fetch(`${url}/speakers`);
+        // Go through the receiver to avoid CORS — VOICEVOX engine doesn't send
+        // Access-Control-Allow-Origin unless started with --cors_policy_mode all.
+        const res = await fetch(`/api/voicevox/speakers?url=${encodeURIComponent(url)}`);
         if (!res.ok) throw new Error('Failed to fetch');
         const speakers = await res.json();
         
@@ -258,6 +330,129 @@ async function fetchSpeakers() {
     } catch (e) {
         select.innerHTML = '<option value="">(Error fetching speakers)</option>';
         console.error('VOICEVOX fetch error:', e);
+    }
+}
+
+async function fetchVoiceFiles(preferred) {
+    const select = document.getElementById('voice_file');
+    try {
+        const res = await fetch('/api/voice_files');
+        const data = await res.json();
+        const files = Array.isArray(data.files) ? data.files : [];
+        const current = data.current || 'voice.json';
+        select.innerHTML = '';
+        if (files.length === 0) {
+            // Defensive: voice.json should exist after first boot, but if the
+            // scan returned nothing we still show the active one so the UI
+            // doesn't look broken.
+            const opt = document.createElement('option');
+            opt.value = current;
+            opt.textContent = current;
+            select.appendChild(opt);
+        } else {
+            files.forEach(name => {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                select.appendChild(opt);
+            });
+        }
+        const desired = preferred || current;
+        if ([...select.options].some(o => o.value === desired)) {
+            select.value = desired;
+        }
+    } catch (e) {
+        select.innerHTML = `<option value="">(${e.message})</option>`;
+        console.error('voice files fetch error:', e);
+    }
+}
+
+async function fetchGoogleLanguages() {
+    const select = document.getElementById('g_lang');
+    const desired = select.dataset.desiredValue || select.value || 'en-US';
+    const apiKey = document.getElementById('g_api_key').value || '';
+
+    select.innerHTML = '<option value="">(Loading...)</option>';
+    try {
+        const params = new URLSearchParams();
+        if (apiKey) params.set('apiKey', apiKey);
+        const url = '/api/google_tts/languages' + (params.toString() ? `?${params}` : '');
+        const res = await fetch(url);
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            // Fallback: keep the saved value selectable even when the API call
+            // fails (e.g. no key yet) so users can still configure manually.
+            select.innerHTML = `<option value="${desired}">${desired} (${err.error || 'fetch failed'})</option>`;
+            return;
+        }
+        const langs = await res.json();
+        select.innerHTML = '';
+        if (!Array.isArray(langs) || langs.length === 0) {
+            select.innerHTML = `<option value="${desired}">${desired} (no languages returned)</option>`;
+            return;
+        }
+        langs.forEach(lc => {
+            const opt = document.createElement('option');
+            opt.value = lc;
+            opt.textContent = lc;
+            select.appendChild(opt);
+        });
+        if ([...select.options].some(o => o.value === desired)) {
+            select.value = desired;
+        }
+        delete select.dataset.desiredValue;
+    } catch (e) {
+        select.innerHTML = `<option value="${desired}">${desired} (${e.message})</option>`;
+        console.error('Google TTS languages fetch error:', e);
+    }
+}
+
+async function fetchGoogleVoices() {
+    const select = document.getElementById('g_voice');
+    const desired = select.dataset.desiredValue || select.value || '';
+    const lang = document.getElementById('g_lang').value || 'en-US';
+    const apiKey = document.getElementById('g_api_key').value || '';
+
+    select.innerHTML = '<option value="">(Loading...)</option>';
+    try {
+        const params = new URLSearchParams({ lang });
+        // Pass the in-form key so the user can preview voices before saving.
+        if (apiKey) params.set('apiKey', apiKey);
+        const res = await fetch(`/api/google_tts/voices?${params.toString()}`);
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            select.innerHTML = `<option value="">(${err.error || 'fetch failed'})</option>`;
+            return;
+        }
+        const voices = await res.json();
+        // Sort: tier (Neural2 > Wavenet > Standard) then name. Keeps the
+        // higher-quality voices at the top of the list.
+        const tierOrder = { 'Neural2': 0, 'Studio': 1, 'Wavenet': 2, 'Polyglot': 3, 'News': 4, 'Standard': 5 };
+        const tierOf = (n) => {
+            for (const k of Object.keys(tierOrder)) if (n.includes(k)) return tierOrder[k];
+            return 99;
+        };
+        voices.sort((a, b) => (tierOf(a.name) - tierOf(b.name)) || a.name.localeCompare(b.name));
+
+        select.innerHTML = '';
+        if (voices.length === 0) {
+            select.innerHTML = `<option value="">(No voices for ${lang})</option>`;
+            return;
+        }
+        voices.forEach(v => {
+            const opt = document.createElement('option');
+            opt.value = v.name;
+            const gender = (v.ssmlGender || '').toLowerCase();
+            opt.textContent = `${v.name}${gender ? ' (' + gender + ')' : ''}`;
+            select.appendChild(opt);
+        });
+        if (desired && [...select.options].some(o => o.value === desired)) {
+            select.value = desired;
+        }
+        delete select.dataset.desiredValue;
+    } catch (e) {
+        select.innerHTML = `<option value="">(${e.message})</option>`;
+        console.error('Google TTS voices fetch error:', e);
     }
 }
 
@@ -280,10 +475,18 @@ async function fetchSerialPorts() {
     }
 }
 
+function applyEngineVisibility(engine) {
+    const isGoogle = engine === 'google';
+    document.getElementById('card-voicevox').classList.toggle('opacity-50', isGoogle);
+    document.getElementById('card-google').classList.toggle('opacity-50', !isGoogle);
+}
+
 async function loadConfig() {
     cfg = await (await fetch('/api/config')).json();
     const cam = cfg.camera_switcher || {};
     const vv  = cfg.voicevox || {};
+    const g   = cfg.google_tts || {};
+    const tts = cfg.tts || {};
     const ext = cfg.extension || {};
 
     const modeEl = document.querySelector(`input[name="camera_mode"][value="${cam.switching_mode || 'Auto'}"]`);
@@ -292,8 +495,15 @@ async function loadConfig() {
     document.getElementById('cam_default').value = cam.default_camera ?? 4;
     document.getElementById('cam_enabled').checked = !!cam.atem_enabled;
 
+    const engine = tts.engine === 'google' ? 'google' : 'voicevox';
+    const engineEl = document.querySelector(`input[name="tts_engine"][value="${engine}"]`);
+    if (engineEl) engineEl.checked = true;
+    applyEngineVisibility(engine);
+
+    await fetchVoiceFiles(tts.voiceFile);
+
     document.getElementById('vv_url').value = vv.url || 'http://localhost:50021';
-    
+
     // Fetch speakers first then set the value
     await fetchSpeakers();
     document.getElementById('vv_speaker').value = vv.speaker ?? 3;
@@ -302,7 +512,30 @@ async function loadConfig() {
     document.getElementById('vv_speed').value = vv.speed ?? 1.2;
     document.getElementById('vv_delay').value = vv.audio_delay_ms ?? 0;
     document.getElementById('vv_enabled').checked = !!vv.enabled;
-    document.getElementById('vv_play_server').checked = !!vv.play_on_server;
+
+    document.getElementById('g_api_key').value = g.apiKey || '';
+    document.getElementById('g_encoding').value = g.audioEncoding || 'MP3';
+    document.getElementById('g_rate').value = g.speakingRate ?? 1.0;
+    document.getElementById('g_pitch').value = g.pitch ?? 0.0;
+    document.getElementById('g_gain').value = g.volumeGainDb ?? 0.0;
+    document.getElementById('g_enabled').checked = !!g.enabled;
+
+    // Stash the saved language and voice so the async loaders can restore the
+    // selection. If no apiKey is set yet, fall back to the raw saved values so
+    // the UI still shows what was configured.
+    const langSelect = document.getElementById('g_lang');
+    langSelect.dataset.desiredValue = g.languageCode || 'en-US';
+    const voiceSelect = document.getElementById('g_voice');
+    voiceSelect.dataset.desiredValue = g.voiceName || 'en-US-Neural2-J';
+    if (g.apiKey) {
+        await fetchGoogleLanguages();
+        await fetchGoogleVoices();
+    } else {
+        const lc = g.languageCode || 'en-US';
+        langSelect.innerHTML = `<option value="${lc}">${lc} (enter API Key to load list)</option>`;
+        const vn = g.voiceName || 'en-US-Neural2-J';
+        voiceSelect.innerHTML = `<option value="${vn}">${vn} (enter API Key to load list)</option>`;
+    }
 
     const led = cfg.led || {};
     document.getElementById('sys_port').value = ext.port ?? 8765;
@@ -342,7 +575,22 @@ async function saveConfig() {
     cfg.voicevox.speed = parseFloat(document.getElementById('vv_speed').value);
     cfg.voicevox.audio_delay_ms = parseInt(document.getElementById('vv_delay').value);
     cfg.voicevox.enabled = document.getElementById('vv_enabled').checked;
-    cfg.voicevox.play_on_server = document.getElementById('vv_play_server').checked;
+
+    cfg.google_tts = cfg.google_tts || {};
+    cfg.google_tts.apiKey = document.getElementById('g_api_key').value;
+    cfg.google_tts.languageCode = document.getElementById('g_lang').value || 'en-US';
+    cfg.google_tts.voiceName = document.getElementById('g_voice').value || 'en-US-Neural2-J';
+    cfg.google_tts.audioEncoding = document.getElementById('g_encoding').value || 'MP3';
+    cfg.google_tts.speakingRate = parseFloat(document.getElementById('g_rate').value);
+    cfg.google_tts.pitch = parseFloat(document.getElementById('g_pitch').value);
+    cfg.google_tts.volumeGainDb = parseFloat(document.getElementById('g_gain').value);
+    cfg.google_tts.enabled = document.getElementById('g_enabled').checked;
+
+    cfg.tts = cfg.tts || {};
+    const engineEl = document.querySelector('input[name="tts_engine"]:checked');
+    cfg.tts.engine = engineEl ? engineEl.value : 'voicevox';
+    cfg.tts.voiceFile = document.getElementById('voice_file').value || 'voice.json';
+    applyEngineVisibility(cfg.tts.engine);
 
     const res = await fetch('/api/config', {
         method: 'POST',
@@ -362,9 +610,45 @@ async function saveConfig() {
 document.querySelectorAll('input, select').forEach(el => {
     el.onchange = async () => {
         if (el.id === 'vv_url') await fetchSpeakers();
+        if (el.id === 'g_api_key') {
+            // Reload both lists when the key changes — the previous catalogue
+            // was either empty or scoped to a different project.
+            const lang = document.getElementById('g_lang');
+            const voice = document.getElementById('g_voice');
+            lang.dataset.desiredValue = lang.value;
+            voice.dataset.desiredValue = voice.value;
+            await fetchGoogleLanguages();
+            await fetchGoogleVoices();
+        } else if (el.id === 'g_lang') {
+            // Voices are language-scoped — the previously-saved voice may not
+            // exist in the new language; we fall through to whatever the API
+            // returns first.
+            const voice = document.getElementById('g_voice');
+            voice.dataset.desiredValue = voice.value;
+            await fetchGoogleVoices();
+        }
         await saveConfig();
     };
 });
+
+document.getElementById('voice_file_refresh').onclick = async (e) => {
+    e.preventDefault();
+    await fetchVoiceFiles(document.getElementById('voice_file').value);
+};
+
+document.getElementById('g_voice_refresh').onclick = async (e) => {
+    e.preventDefault();
+    const v = document.getElementById('g_voice');
+    v.dataset.desiredValue = v.value;
+    await fetchGoogleVoices();
+};
+
+document.getElementById('g_lang_refresh').onclick = async (e) => {
+    e.preventDefault();
+    const l = document.getElementById('g_lang');
+    l.dataset.desiredValue = l.value;
+    await fetchGoogleLanguages();
+};
 
 document.querySelectorAll('input[name="camera_mode"]').forEach(r => {
     r.onchange = saveConfig;
