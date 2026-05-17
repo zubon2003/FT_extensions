@@ -52,22 +52,40 @@ function createRouter(services) {
         seenOrder.length = 0;
     }
 
-    function updateSeatMap(pilots) {
+    // Seat = the pilot's position in the RaceLoaded roster, fixed for the
+    // race. RaceLoaded (§7.1) is the single authority: it is re-sent on race
+    // switch AND on RaceManager.ResetRace, so this rebuilds idempotently
+    // (same roster → same seats). NextRace (next race, §7.2) and RaceResult
+    // (Position-sorted / invalidation, §7.5) deliberately do NOT touch the
+    // seat map — letting them rebuild it would reshuffle seat numbers
+    // mid/post-heat and destabilise the LED + camera "Seat N" mode.
+    function assignSeatsFromRoster(pilots) {
         if (!Array.isArray(pilots) || pilots.length === 0) return;
-        // An empty list is NOT "zero pilots" — per spec it is the
-        // invalidation / "no roster" signal: NextRace with no next race (§7.2),
-        // RaceResult result-clear (§7.5), startup re-load. Clearing here would
-        // wipe the current race's seat map mid-heat and silently kill the LED
-        // (voice/camera survive because they don't use this map). Keep the last
-        // known roster instead.
-        //
-        // Rebuild fresh — stale entries from the previous race would mis-map
-        // seats when pilot rosters change between heats.
+        // Empty list is the spec's invalidation / "no roster" signal — never
+        // wipe; keep the last known roster instead.
         pilotSeatByName.clear();
         pilots.forEach((p, idx) => {
             // p might be PilotInfoExt or PilotResultEntry (with p.pilot)
             const pilot = p.pilot || p;
             if (pilot?.name) pilotSeatByName.set(pilot.name, idx);
+        });
+    }
+
+    // PilotRaceState (§7.8, late join / roster change mid-race): keep every
+    // already-seated pilot's number stable and only append genuinely new
+    // pilots at the next free seat. A pilot who left keeps its (now vacant)
+    // number so nobody else shifts — LED and camera "Seat N" stay stable
+    // through roster churn.
+    function appendNewSeats(pilots) {
+        if (!Array.isArray(pilots) || pilots.length === 0) return;
+        let nextSeat = pilotSeatByName.size
+            ? Math.max(...pilotSeatByName.values()) + 1
+            : 0;
+        pilots.forEach((p) => {
+            const pilot = p.pilot || p;
+            if (pilot?.name && !pilotSeatByName.has(pilot.name)) {
+                pilotSeatByName.set(pilot.name, nextSeat++);
+            }
         });
     }
 
@@ -148,7 +166,7 @@ function createRouter(services) {
         },
 
         RaceLoaded(evt) {
-            updateSeatMap(evt.pilots);
+            assignSeatsFromRoster(evt.pilots);
             voiceLogic.loadPilots(evt.pilots);
             voiceLogic.setRaceActive(false);
             resultsStore.onRaceLoaded(evt);
@@ -156,7 +174,9 @@ function createRouter(services) {
         },
 
         NextRace(evt) {
-            updateSeatMap(evt.pilots);
+            // Next race's roster — not the current race. Must not touch the
+            // seat map (that would re-seat current pilots from a different
+            // roster). resultsStore handles the "next heat" UI separately.
             resultsStore.onNextRace(evt);
         },
 
@@ -240,7 +260,9 @@ function createRouter(services) {
         },
 
         RaceResult(evt) {
-            updateSeatMap(evt.pilots);
+            // Pilots here are Position-sorted (§7.5) and empty on result
+            // invalidation — rebuilding the seat map from this would reshuffle
+            // seat numbers at race end. Seats stay as RaceLoaded assigned them.
             resultsStore.onRaceResult(evt);
         },
 
@@ -254,7 +276,7 @@ function createRouter(services) {
         },
 
         PilotRaceState(evt) {
-            updateSeatMap(evt.pilots);
+            appendNewSeats(evt.pilots);
             voiceLogic.loadPilots(evt.pilots);
         },
 
