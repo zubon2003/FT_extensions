@@ -84,6 +84,40 @@
                             <div class="form-text">Adjust LED sync (0-1000ms).</div>
                         </div>
                     </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="led_countdown_start" checked>
+                                <label class="form-check-label" for="led_countdown_start">Countdown Start</label>
+                            </div>
+                            <div class="form-text">
+                                ON: send 8/5/4/3/2/1/G countdown chars (default, suits fixed-delay starts).<br>
+                                OFF: send a blue pilot-pass when the start announcement begins, then a red pilot-pass at the scheduled start moment (suits randomised-delay starts).
+                            </div>
+                            <div class="mt-2 d-flex align-items-center gap-2">
+                                <label class="form-label small mb-0" for="led_countdown_color">Countdown Color</label>
+                                <input type="color" id="led_countdown_color" class="form-control form-control-color" value="#FF0000" title="RGB565 colour packed into V2/V3 of the 5/4/3/2/1 system packets">
+                            </div>
+                            <div class="mt-2 d-flex align-items-center gap-2">
+                                <label class="form-label small mb-0" for="led_announcement_color">Start Announcement Color</label>
+                                <input type="color" id="led_announcement_color" class="form-control form-control-color" value="#0000FF" title="No-countdown mode: pilot-pass colour sent when the start announcement begins">
+                            </div>
+                            <div class="mt-2 d-flex align-items-center gap-2">
+                                <label class="form-label small mb-0" for="led_random_start_color">Random Start Color</label>
+                                <input type="color" id="led_random_start_color" class="form-control form-control-color" value="#00FF00" title="No-countdown mode: pilot-pass colour sent at the scheduled start moment">
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="led_lap_indicator" checked>
+                                <label class="form-check-label" for="led_lap_indicator">LAP Indicator</label>
+                            </div>
+                            <div class="form-text">
+                                ON: flash pilot color on each gate-pass (default).<br>
+                                OFF: suppress per-lap pilot flashes. Start-of-race blue / red cues still fire.
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -544,6 +578,11 @@ async function loadConfig() {
     document.getElementById('led_enabled').checked = !!led.enabled;
     document.getElementById('led_port').value = led.port || '';
     document.getElementById('led_comp').value = led.compensation_ms ?? 0;
+    document.getElementById('led_countdown_start').checked = led.countdown_start !== false;
+    document.getElementById('led_lap_indicator').checked = led.lap_indicator !== false;
+    document.getElementById('led_countdown_color').value = led.countdown_color || '#FF0000';
+    document.getElementById('led_announcement_color').value = led.announcement_color || '#0000FF';
+    document.getElementById('led_random_start_color').value = led.random_start_color || '#00FF00';
 
     // Set up camera button click handlers
     document.querySelectorAll('.output-square').forEach(sq => {
@@ -560,6 +599,11 @@ async function saveConfig() {
     cfg.led.enabled = document.getElementById('led_enabled').checked;
     cfg.led.port = document.getElementById('led_port').value;
     cfg.led.compensation_ms = parseInt(document.getElementById('led_comp').value) || 0;
+    cfg.led.countdown_start = document.getElementById('led_countdown_start').checked;
+    cfg.led.lap_indicator = document.getElementById('led_lap_indicator').checked;
+    cfg.led.countdown_color = document.getElementById('led_countdown_color').value;
+    cfg.led.announcement_color = document.getElementById('led_announcement_color').value;
+    cfg.led.random_start_color = document.getElementById('led_random_start_color').value;
 
     cfg.camera_switcher = cfg.camera_switcher || {};
     const mode = document.querySelector('input[name="camera_mode"]:checked');

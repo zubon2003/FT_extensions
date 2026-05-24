@@ -29,6 +29,13 @@ function createRouter(services) {
     const pilotSeatByName = new Map();
     let lastSeq = 0;
     let lastDetection = null;
+    // Staggered races (TimeTrialStaggeredStart) flash a per-pilot go cue via
+    // onStaggeredStartCue; the per-gate lap flashes during the race itself are
+    // visual noise on top of that, so suppress them for the duration of a
+    // staggered race regardless of the lap_indicator setting. Set on first
+    // PilotStaggeredStart, cleared when the race ends (RaceEnd / RaceCancelled)
+    // and on the next RaceLoaded as a defensive reset.
+    let staggeredRaceActive = false;
 
     // Bounded de-dup window. Detections that disappear from the window can be
     // re-processed on a network retry; that's acceptable because de-dup is a
@@ -169,6 +176,7 @@ function createRouter(services) {
             assignSeatsFromRoster(evt.pilots);
             voiceLogic.loadPilots(evt.pilots);
             voiceLogic.setRaceActive(false);
+            staggeredRaceActive = false;
             resultsStore.onRaceLoaded(evt);
             cameraSwitcher.setRaceLapCount(evt.targetLaps || null);
         },
@@ -188,11 +196,24 @@ function createRouter(services) {
                 const startMonotonic = nowMonotonic + (scheduledWallMs - nowWallMs) / 1000;
                 io.emit('race_start', { startTime: startMonotonic });
                 logger.info(`[RacePreStart] R${evt.round}.${evt.race} in ${((scheduledWallMs - nowWallMs)/1000).toFixed(2)}s`);
+                // Both calls are mode-agnostic at this layer; the LED handler
+                // short-circuits whichever path doesn't match its
+                // countdown_start setting.
                 ledHandler.scheduleCountdown(scheduledWallMs);
+                ledHandler.scheduleStartCue(scheduledWallMs);
             } else {
                 logger.info(`[RacePreStart] R${evt.round}.${evt.race} (no scheduledStart)`);
             }
             cameraSwitcher.triggerEvent({ type: 'race_start' });
+        },
+
+        // §7.10 — fires at the start of the "Arm your quads…" announcement.
+        // In no-countdown mode (countdown_start=false) we light the panel blue
+        // here so operators see a clear "preparation begins" cue. In countdown
+        // mode the LED handler ignores it (countdown already covers the lead-in).
+        RaceStartAnnouncement(evt) {
+            logger.info(`[RaceStartAnnouncement] R${evt.round}.${evt.race} delay=${evt.delaySeconds}s`);
+            ledHandler.onRaceStartAnnouncement();
         },
 
         RaceStart(evt) {
@@ -216,6 +237,7 @@ function createRouter(services) {
         RaceCancelled(evt) { return handlers._raceEnded(evt); },
         _raceEnded(evt) {
             voiceLogic.setRaceActive(false);
+            staggeredRaceActive = false;
             cameraSwitcher.triggerEvent({ type: 'race_end' });
             ledHandler.onRaceEnd();
             try { getTts().clearQueue(); } catch (_e) { /* best-effort */ }
@@ -236,7 +258,7 @@ function createRouter(services) {
 
             const seat = pilotSeatByName.get(evt.pilotName);
 
-            if (seat !== undefined && evt.isLapEnd) {
+            if (seat !== undefined && evt.isLapEnd && !staggeredRaceActive) {
                 const c = evt.channel || {};
                 ledHandler.onPilotPass(seat, c.colorR || 0, c.colorG || 0, c.colorB || 0);
             }
@@ -287,6 +309,10 @@ function createRouter(services) {
         PilotStaggeredStart(evt) {
             const p = evt.pilot;
             if (!p) return;
+            // Mark the race as staggered so the DetectionExt handler suppresses
+            // per-lap LED flashes for the rest of this race. Cleared in
+            // _raceEnded / RaceLoaded.
+            staggeredRaceActive = true;
             logger.info(`[StaggeredStart] ${p.name} (${evt.orderIndex + 1}/${evt.totalPilots}, delay=${evt.delaySeconds}s)`);
             voiceLogic.onStaggeredStart(evt, announce);
             // LED fires regardless of pilotSeatByName state — the receiver may
@@ -297,7 +323,10 @@ function createRouter(services) {
             // log line still shows a meaningful position.
             const c = p.channel || {};
             const seat = pilotSeatByName.get(p.name) ?? evt.orderIndex;
-            ledHandler.onPilotPass(seat, c.colorR || 0, c.colorG || 0, c.colorB || 0);
+            // Staggered-start uses a dedicated cue method so the flash fires
+            // even when lap_indicator is OFF — it's the only visible signal
+            // of this pilot's individual go moment.
+            ledHandler.onStaggeredStartCue(seat, c.colorR || 0, c.colorG || 0, c.colorB || 0);
         },
     };
 

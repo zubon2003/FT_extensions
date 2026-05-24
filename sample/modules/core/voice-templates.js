@@ -45,19 +45,10 @@ function load() {
         templates = { ...DEFAULTS, ...user };
         logger.info(`[Voice] templates loaded from ${currentFile}`);
     } catch (e) {
-        if (e.code === 'ENOENT' && currentFile === 'voice.json') {
-            // First run: seed voice.json with defaults so the user can edit
-            // it. We only ever auto-create the base file; voice_XX.json
-            // variants must be authored explicitly.
-            try {
-                fs.writeFileSync(target, JSON.stringify(DEFAULTS, null, 2) + '\n', 'utf8');
-                templates = { ...DEFAULTS };
-                logger.info(`voice.json created at ${target}`);
-            } catch (writeErr) {
-                logger.warn(`voice.json could not be created: ${writeErr.message}`);
-            }
+        templates = { ...DEFAULTS };
+        if (e.code === 'ENOENT') {
+            logger.info(`[Voice] ${currentFile} not found — using built-in defaults`);
         } else {
-            templates = { ...DEFAULTS };
             logger.warn(`[Voice] ${currentFile} read failed: ${e.message} — using defaults`);
         }
     }
@@ -77,7 +68,10 @@ function setFile(filename) {
         return true;
     }
     const target = path.resolve(CWD, base);
-    // voice.json is auto-seeded if missing, so accept it unconditionally.
+    // voice.json is the canonical "use built-in defaults" sentinel and is
+    // accepted unconditionally — load() will silently fall back to DEFAULTS
+    // when the file is missing. Other names must point at a real file so
+    // the operator can't silently land on the defaults by typo.
     if (base !== 'voice.json' && !fs.existsSync(target)) {
         logger.warn(`[Voice] file not found: ${target}`);
         return false;
