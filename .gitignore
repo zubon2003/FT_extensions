@@ -5,6 +5,7 @@ sample/fpvt.json
 
 # Receiver runtime logs
 sample/log/
+log/
 
 # Node
 node_modules/
