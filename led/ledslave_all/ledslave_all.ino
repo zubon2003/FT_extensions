@@ -19,12 +19,23 @@
 #include <esp_now.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include <EEPROM.h>
 
 // --- Hardware -------------------------------------------------------------
 
 #define DATA_PIN    10
 #define NUM_LEDS    50
-#define BRIGHTNESS  64              // 0-255
+#define BRIGHTNESS  64              // 0-255, used until EEPROM has a valid value
+
+// --- EEPROM ---------------------------------------------------------------
+// 3-byte layout: addr 0 holds a magic marker so we can distinguish a freshly
+// erased flash from a saved value; addr 1 holds the brightness (1..255);
+// addr 2 holds the race-rainbow mode flag (0 = lights off on G/E, 1 = rainbow).
+#define EEPROM_SIZE         3
+#define EEPROM_ADDR_MAGIC   0
+#define EEPROM_ADDR_BRIGHT  1
+#define EEPROM_ADDR_RBMODE  2
+#define EEPROM_MAGIC        0xB7    // arbitrary, just != 0xFF (erased flash)
 
 // --- Network --------------------------------------------------------------
 
@@ -43,8 +54,10 @@
 #define FADE_OUT_MS   500
 
 // --- Rainbow tuning -------------------------------------------------------
-
-#define RAINBOW_DELAY_SLOW 20       // ms between hue advances (slow rainbow)
+// Hue advance interval. Smaller = faster cycling. SLOW is the "calm" rainbow
+// used during ready / after-race; FAST is the energetic in-race rainbow.
+#define RAINBOW_DELAY_SLOW 20
+#define RAINBOW_DELAY_FAST 4
 
 // --- Countdown tuning -----------------------------------------------------
 // LEDs lit per countdown digit: digit N → N * COUNTDOWN_STEP LEDs from the
@@ -56,13 +69,30 @@
 
 enum BaseMode : uint8_t {
     BASE_OFF,
-    BASE_RAINBOW,
+    BASE_RAINBOW,        // slow rainbow
+    BASE_RAINBOW_FAST,   // in-race energetic rainbow
     BASE_COUNTDOWN,
 };
+
+// Race-rainbow mode flag. When true the R/G/E SYSTEM commands paint rainbows
+// at race milestones; when false the slave keeps the historical behaviour
+// (R = slow rainbow, G = off, E = off). Toggled at runtime by the host via
+// SYSTEM 'M' and persisted to EEPROM so the slave boots in the chosen mode.
+static bool rainbowMode = false;
 
 static CRGB         leds[NUM_LEDS];
 static BaseMode     baseMode       = BASE_OFF;
 static uint8_t      countdownDigit = 0;   // 1..5, only meaningful in BASE_COUNTDOWN
+
+// Start-sequence watchdog. Set when R or a countdown digit arrives and reset
+// on each subsequent start-sequence packet. If no packet refreshes it for
+// START_SEQ_WATCHDOG_MS the slave assumes the race was aborted/dropped and
+// reverts to the current mode's idle state (rainbow → slow rainbow, legacy
+// → off). Guarantees "abort during countdown → eventually slow rainbow"
+// even if the host never gets a chance to send 'E'.
+#define START_SEQ_WATCHDOG_MS 5000
+static bool          startSeqActive    = false;
+static unsigned long startSeqLastMs    = 0;
 // Host packs an RGB565 colour into V2/V3 of the 5/4/3/2/1 SYSTEM packets so the
 // operator can pick the countdown colour from the sample's web UI. Default red
 // is used if no SYSTEM packet has updated it yet (host < v?, or first frame).
@@ -107,10 +137,17 @@ static void fadeCancel() {
 
 static void advanceRainbowHue() {
     unsigned long now = millis();
-    if (now - lastRainbowUpdate >= RAINBOW_DELAY_SLOW) {
+    uint16_t interval = (baseMode == BASE_RAINBOW_FAST)
+        ? RAINBOW_DELAY_FAST
+        : RAINBOW_DELAY_SLOW;
+    if (now - lastRainbowUpdate >= interval) {
         gHue += 5;
         lastRainbowUpdate = now;
     }
+}
+
+static bool isRainbowBase(BaseMode m) {
+    return m == BASE_RAINBOW || m == BASE_RAINBOW_FAST;
 }
 
 // Compute the base-layer colour for one LED. Called both for direct base
@@ -119,6 +156,7 @@ static void advanceRainbowHue() {
 static CRGB getBaseColor(int i) {
     switch (baseMode) {
         case BASE_RAINBOW:
+        case BASE_RAINBOW_FAST:
             return CHSV(gHue + (i * 10), 255, 255);
         case BASE_COUNTDOWN: {
             // Lit segment is anchored to the END of the strip (highest indices).
@@ -136,7 +174,7 @@ static CRGB getBaseColor(int i) {
 }
 
 static void renderBase() {
-    if (baseMode == BASE_RAINBOW) advanceRainbowHue();
+    if (isRainbowBase(baseMode)) advanceRainbowHue();
     for (int i = 0; i < NUM_LEDS; i++) leds[i] = getBaseColor(i);
 }
 
@@ -145,7 +183,7 @@ static void renderBase() {
 // (rainbow hue, etc.) so the underlay still looks alive mid-fade.
 
 static void renderFadeBlend(fract8 amount) {
-    if (baseMode == BASE_RAINBOW) advanceRainbowHue();
+    if (isRainbowBase(baseMode)) advanceRainbowHue();
     for (int i = 0; i < NUM_LEDS; i++) {
         CRGB base = getBaseColor(i);
         leds[i] = nblend(base, fadeTarget, amount);
@@ -195,11 +233,18 @@ static void tickFade() {
 static void onSystem(char cmd, uint8_t v2, uint8_t v3) {
     switch (cmd) {
         case 'R':
-            baseMode = BASE_RAINBOW;
+            // Ready (~8 s before race). Default behaviour shows a calm rainbow;
+            // race-rainbow mode wants the strip dark during the start sequence
+            // so the countdown digits and pilot fades pop against black.
+            baseMode = rainbowMode ? BASE_OFF : BASE_RAINBOW;
+            startSeqActive = true;
+            startSeqLastMs = millis();
             break;
         case '5': case '4': case '3': case '2': case '1':
             baseMode       = BASE_COUNTDOWN;
             countdownDigit = (uint8_t)(cmd - '0');
+            startSeqActive = true;
+            startSeqLastMs = millis();
             // V2/V3 carry an RGB565 packed colour. Zero is sent by older
             // hosts (and yields black, an obviously-broken display) so treat
             // 0x0000 as "no colour update" and keep the previous value.
@@ -208,14 +253,70 @@ static void onSystem(char cmd, uint8_t v2, uint8_t v3) {
             }
             break;
         case 'G':
-            // Race started — drop to blank base so pilot fades pop on dark.
-            baseMode = BASE_OFF;
+            // Race started. Default: blank so pilot fades pop on dark.
+            // Race-rainbow mode: kick off the fast rainbow as the race energy.
+            baseMode = rainbowMode ? BASE_RAINBOW_FAST : BASE_OFF;
+            startSeqActive = false;
             break;
         case 'E':
-            // Race ended — cancel any in-flight pilot fade and go dark.
+            // Race ended. Default: blank. Race-rainbow mode: slow rainbow as
+            // a calm post-race ambient.
+            fadeCancel();
+            baseMode = rainbowMode ? BASE_RAINBOW : BASE_OFF;
+            startSeqActive = false;
+            break;
+        case 'M': {
+            // Mode toggle. V2 = 0 → race-rainbow OFF (legacy), V2 != 0 → ON.
+            // Persist only on actual change. When the mode actually flips AND
+            // the slave is idle (no start sequence, no race in progress, no
+            // pilot fade), reflect the new mode visually right away so the
+            // operator sees the toggle take effect without waiting for the
+            // next race event. Mid-race toggles leave the live state alone.
+            bool newMode = (v2 != 0);
+            if (rainbowMode != newMode) {
+                rainbowMode = newMode;
+                EEPROM.write(EEPROM_ADDR_MAGIC, EEPROM_MAGIC);
+                EEPROM.write(EEPROM_ADDR_RBMODE, newMode ? 1 : 0);
+                EEPROM.commit();
+                bool idle = !startSeqActive
+                         && fadeState == FADE_IDLE
+                         && baseMode != BASE_RAINBOW_FAST
+                         && baseMode != BASE_COUNTDOWN;
+                if (idle) {
+                    baseMode = rainbowMode ? BASE_RAINBOW : BASE_OFF;
+                }
+            }
+            break;
+        }
+        case 'T':
+            // Test rainbow from the web UI — always show slow rainbow,
+            // independent of rainbowMode (so the operator's test button
+            // always shows colours, even when race-rainbow is disabled).
+            fadeCancel();
+            baseMode = BASE_RAINBOW;
+            break;
+        case 'X':
+            // Test clear — force-blank the strip regardless of rainbowMode.
+            // Pairs with 'T' to provide a mode-independent reset for tests.
             fadeCancel();
             baseMode = BASE_OFF;
             break;
+        case 'B': {
+            // Brightness update — V2 carries 1..255. Zero would blank the
+            // strip entirely; the host clamps to 1 so a stray 0 from old
+            // firmware doesn't accidentally turn everything off.
+            uint8_t b = (v2 == 0) ? 1 : v2;
+            FastLED.setBrightness(b);
+            // Persist only on actual change to avoid wearing NVS on every
+            // host reconnect (host re-sends current brightness on open).
+            if (EEPROM.read(EEPROM_ADDR_MAGIC) != EEPROM_MAGIC ||
+                EEPROM.read(EEPROM_ADDR_BRIGHT) != b) {
+                EEPROM.write(EEPROM_ADDR_MAGIC, EEPROM_MAGIC);
+                EEPROM.write(EEPROM_ADDR_BRIGHT, b);
+                EEPROM.commit();
+            }
+            break;
+        }
         default:
             break;
     }
@@ -240,8 +341,23 @@ static void onReceiveData(const esp_now_recv_info_t* /*info*/, const uint8_t* da
 // --- Setup / loop ---------------------------------------------------------
 
 void setup() {
+    EEPROM.begin(EEPROM_SIZE);
+    uint8_t storedBrightness = BRIGHTNESS;
+    if (EEPROM.read(EEPROM_ADDR_MAGIC) == EEPROM_MAGIC) {
+        uint8_t b = EEPROM.read(EEPROM_ADDR_BRIGHT);
+        if (b != 0) storedBrightness = b;   // 0 would blank the strip
+        // Treat anything other than exactly 1 (incl. 0xFF from older flash
+        // layouts that only wrote 2 bytes) as "feature off" — preserves the
+        // legacy behaviour for slaves upgraded without re-saving the mode.
+        rainbowMode = (EEPROM.read(EEPROM_ADDR_RBMODE) == 1);
+    }
+    // Race-rainbow mode's idle visual is the slow rainbow itself, so the strip
+    // shows it from boot even before the host has sent any packet. Legacy mode
+    // keeps the historical "boot dark" behaviour.
+    if (rainbowMode) baseMode = BASE_RAINBOW;
+
     FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, NUM_LEDS);
-    FastLED.setBrightness(BRIGHTNESS);
+    FastLED.setBrightness(storedBrightness);
     FastLED.clear();
     FastLED.show();
 
@@ -264,6 +380,16 @@ void setup() {
 }
 
 void loop() {
+    // Start-sequence watchdog: if the host stopped sending progress packets
+    // (race aborted/dropped, link lost) while we're still mid-sequence, revert
+    // to the mode's idle visual so the strip doesn't get stuck on a countdown
+    // digit forever. 5 s is well past the normal 1-second-per-digit cadence.
+    if (startSeqActive && (millis() - startSeqLastMs) > START_SEQ_WATCHDOG_MS) {
+        startSeqActive = false;
+        fadeCancel();
+        baseMode = rainbowMode ? BASE_RAINBOW : BASE_OFF;
+    }
+
     if (fadeState != FADE_IDLE) {
         tickFade();
     } else {

@@ -116,6 +116,38 @@
                                 ON: flash pilot color on each gate-pass (default).<br>
                                 OFF: suppress per-lap pilot flashes. Start-of-race blue / red cues still fire.
                             </div>
+                            <div class="mt-3">
+                                <label class="form-label small mb-1" for="led_brightness">
+                                    Brightness <span id="led_brightness_value">64</span> / 255
+                                </label>
+                                <input type="range" class="form-range" id="led_brightness" min="1" max="255" step="1" value="64">
+                                <div class="form-text">Strip brightness 1-255. Applied to all slaves on save.</div>
+                            </div>
+                            <div class="mt-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="led_race_rainbow">
+                                    <label class="form-check-label" for="led_race_rainbow">Race Rainbow</label>
+                                </div>
+                                <div class="form-text">
+                                    ON: dark during start sequence, fast rainbow at GO, slow rainbow after race end.<br>
+                                    OFF: lights off at GO and after race end (legacy). Persisted in slave EEPROM.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-12">
+                            <label class="form-label small mb-1">LED Test</label>
+                            <div class="btn-group btn-group-sm d-flex flex-wrap" role="group" aria-label="LED test cues">
+                                <button type="button" class="btn btn-outline-secondary" data-led-test="rainbow">Test Rainbow</button>
+                                <button type="button" class="btn btn-outline-danger"    data-led-test="R">Test R</button>
+                                <button type="button" class="btn btn-outline-success"   data-led-test="G">Test G</button>
+                                <button type="button" class="btn btn-outline-primary"   data-led-test="B">Test B</button>
+                                <button type="button" class="btn btn-outline-warning"   data-led-test="Y">Test Y</button>
+                            </div>
+                            <div class="form-text">
+                                Rainbow shows for ~3s then auto-clears; R/G/B/Y fade ~2s. Requires LED Enabled + open port.
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -583,6 +615,12 @@ async function loadConfig() {
     document.getElementById('led_countdown_color').value = led.countdown_color || '#FF0000';
     document.getElementById('led_announcement_color').value = led.announcement_color || '#0000FF';
     document.getElementById('led_random_start_color').value = led.random_start_color || '#00FF00';
+    const brightnessInput = document.getElementById('led_brightness');
+    const brightnessValue = document.getElementById('led_brightness_value');
+    brightnessInput.value = led.brightness ?? 64;
+    brightnessValue.textContent = brightnessInput.value;
+    brightnessInput.oninput = () => { brightnessValue.textContent = brightnessInput.value; };
+    document.getElementById('led_race_rainbow').checked = !!led.race_rainbow;
 
     // Set up camera button click handlers
     document.querySelectorAll('.output-square').forEach(sq => {
@@ -604,6 +642,8 @@ async function saveConfig() {
     cfg.led.countdown_color = document.getElementById('led_countdown_color').value;
     cfg.led.announcement_color = document.getElementById('led_announcement_color').value;
     cfg.led.random_start_color = document.getElementById('led_random_start_color').value;
+    cfg.led.brightness = parseInt(document.getElementById('led_brightness').value) || 64;
+    cfg.led.race_rainbow = document.getElementById('led_race_rainbow').checked;
 
     cfg.camera_switcher = cfg.camera_switcher || {};
     const mode = document.querySelector('input[name="camera_mode"]:checked');
@@ -703,6 +743,21 @@ document.getElementById('btn-test-voice').onclick = async () => {
     btn.disabled = true;
     try { await fetch('/api/test_voice'); } finally { btn.disabled = false; }
 };
+
+document.querySelectorAll('[data-led-test]').forEach(btn => {
+    btn.onclick = async () => {
+        const kind = btn.getAttribute('data-led-test');
+        btn.disabled = true;
+        try {
+            await fetch(`/api/led_test?kind=${encodeURIComponent(kind)}`);
+        } finally {
+            // Single-colour pilot fades last ~2s on the slave; re-enable a bit
+            // later so the operator doesn't double-tap during the fade and see
+            // mid-fade restarts. Rainbow is instantaneous; same gate is fine.
+            setTimeout(() => { btn.disabled = false; }, 500);
+        }
+    };
+});
 
 async function poll() {
     try {

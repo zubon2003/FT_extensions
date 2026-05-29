@@ -51,6 +51,10 @@ const DEFAULT_CONFIG = {
         enabled: false,
         port: '',
         compensation_ms: 0,
+        brightness: 64,
+        race_rainbow: false,
+        countdown_start: false,
+        lap_indicator: false,
     },
     camera_switcher: {
         switching_mode: 'Auto',
@@ -73,7 +77,7 @@ const DEFAULT_CONFIG = {
         volume: 2.7,
         speed: 1.2,
         audio_delay_ms: 0,
-        enabled: true,
+        enabled: false,
     },
     google_tts: {
         // Operator must paste their own key in the Web UI — never commit one.
@@ -85,7 +89,7 @@ const DEFAULT_CONFIG = {
         volumeGainDb: 0,
         audioEncoding: 'MP3',
         audio_delay_ms: 0,
-        enabled: true,
+        enabled: false,
     },
 };
 
@@ -490,6 +494,27 @@ app.get('/api/test_voice', async (req, res) => {
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
+});
+
+// Operator-facing LED test cues fired from the web settings page.
+// kind=rainbow → persistent rainbow base; R/G/B/Y → single pilot-pass flash.
+const LED_TEST_COLORS = {
+    R: [255, 0, 0],
+    G: [0, 255, 0],
+    B: [0, 0, 255],
+    Y: [255, 255, 0],
+};
+app.get('/api/led_test', (req, res) => {
+    const kind = (req.query.kind || '').toString();
+    if (kind === 'rainbow') {
+        ledHandler.testRainbow();
+    } else if (LED_TEST_COLORS[kind]) {
+        const [r, g, b] = LED_TEST_COLORS[kind];
+        ledHandler.testColor(kind, r, g, b);
+    } else {
+        return res.status(400).json({ error: `unknown kind: ${kind}` });
+    }
+    res.json({ success: true, kind });
 });
 
 app.get('/api/serial_ports', async (req, res) => {
