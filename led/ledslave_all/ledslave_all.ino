@@ -60,9 +60,9 @@
 #define RAINBOW_DELAY_FAST 4
 
 // --- Countdown tuning -----------------------------------------------------
-// LEDs lit per countdown digit: digit N → N * COUNTDOWN_STEP LEDs from the
-// strip tail. 5 → 50, 4 → 40, …, 1 → 10. Clamped to NUM_LEDS in render.
-#define COUNTDOWN_STEP 10
+// LEDs lit per countdown digit: digit N → N/5 of the strip, anchored to the
+// tail. Derived from NUM_LEDS so changing the strip length scales the
+// countdown segments automatically (50→10/digit, 30→6/digit, 100→20/digit).
 #define COUNTDOWN_COLOR_DEFAULT CRGB::Red
 
 // --- Base layer state -----------------------------------------------------
@@ -160,10 +160,11 @@ static CRGB getBaseColor(int i) {
             return CHSV(gHue + (i * 10), 255, 255);
         case BASE_COUNTDOWN: {
             // Lit segment is anchored to the END of the strip (highest indices).
-            // Going 5 → 4 drops 10 LEDs from the LOW end of the lit segment,
-            // so the strip visually shrinks "from the start" each step and the
-            // remaining glow stays clustered near the strip's tail.
-            int litCount = (int)countdownDigit * COUNTDOWN_STEP;
+            // Going 5 → 4 drops one fifth of the strip from the LOW end of the
+            // lit segment, so the strip visually shrinks "from the start" each
+            // step and the remaining glow stays clustered near the strip's tail.
+            // Scales with NUM_LEDS so longer/shorter strips fill proportionally.
+            int litCount = ((int)countdownDigit * NUM_LEDS) / 5;
             if (litCount > NUM_LEDS) litCount = NUM_LEDS;
             return (i >= NUM_LEDS - litCount) ? countdownColor : CRGB::Black;
         }
