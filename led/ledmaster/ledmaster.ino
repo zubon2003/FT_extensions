@@ -122,6 +122,16 @@ void setup() {
     }
 
     Serial.printf("Channel %d — waiting for 5-byte packets [Type, V1, V2, V3, CRC]\n", CHANNEL);
+
+    // --- TEMP self-test: broadcast SYSTEM 'T' once so slaves rainbow without
+    // needing the web UI. Remove this block when ESP-NOW path is verified.
+    delay(5000);
+    {
+        uint8_t pkt[PACKET_SIZE] = { TYPE_SYSTEM, 'T', 0x00, 0x00, 0 };
+        pkt[4] = pkt[0] ^ pkt[1] ^ pkt[2] ^ pkt[3];
+        esp_err_t r = esp_now_send(broadcastAddr, pkt, PACKET_SIZE);
+        Serial.printf("SELF-TEST: sent SYSTEM 'T' (esp_now_send=%d)\n", (int)r);
+    }
 }
 
 void loop() {

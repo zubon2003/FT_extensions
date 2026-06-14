@@ -362,6 +362,23 @@ void setup() {
     FastLED.clear();
     FastLED.show();
 
+    // Boot self-test: 3 s rainbow so the operator can confirm the strip and
+    // wiring are alive before any ESP-NOW traffic arrives.
+    {
+        unsigned long bootStart = millis();
+        uint8_t hue = 0;
+        while (millis() - bootStart < 3000) {
+            for (int i = 0; i < NUM_LEDS; i++) {
+                leds[i] = CHSV(hue + (i * 10), 255, 255);
+            }
+            FastLED.show();
+            hue += 3;
+            delay(20);
+        }
+        FastLED.clear();
+        FastLED.show();
+    }
+
     Serial.begin(115200);
     delay(2000);
     Serial.println("YLED slave (all) starting");
